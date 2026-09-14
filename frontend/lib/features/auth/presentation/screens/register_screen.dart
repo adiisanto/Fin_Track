@@ -32,8 +32,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     SnackBar(content: Text(state.errorMessage)),
                   );
                 } else if (state is Authenticated) {
-                  // Navigate to Dashboard
-                  // Navigator.of(context).pushReplacementNamed('/dashboard');
+                  Navigator.of(context).pop();
                 }
               },
               builder: (context, state) {
