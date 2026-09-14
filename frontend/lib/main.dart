@@ -5,6 +5,9 @@ import 'core/storage/secure_storage.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/presentation/bloc/auth_bloc.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
+import 'features/finance/data/finance_repository.dart';
+import 'features/finance/presentation/bloc/dashboard_bloc.dart';
+import 'features/finance/presentation/screens/dashboard_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,30 +23,41 @@ void main() {
     secureStorage: secureStorage,
   );
 
-  runApp(MyApp(authRepository: authRepository));
+  final financeRepository = FinanceRepository(
+    dio: dioClient.dio,
+  );
+
+  runApp(MyApp(authRepository: authRepository, financeRepository: financeRepository));
 }
 
 class MyApp extends StatelessWidget {
   final AuthRepository authRepository;
+  final FinanceRepository financeRepository;
 
-  const MyApp({Key? key, required this.authRepository}) : super(key: key);
+  const MyApp({Key? key, required this.authRepository, required this.financeRepository}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return MultiBlocProvider(
+    return MultiRepositoryProvider(
       providers: [
-        BlocProvider(
-          create: (context) => AuthBloc(authRepository: authRepository)
-            ..add(AuthCheckRequested()),
-        ),
+        RepositoryProvider.value(value: authRepository),
+        RepositoryProvider.value(value: financeRepository),
       ],
-      child: MaterialApp(
-        title: 'Financial Tracker',
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          useMaterial3: true,
+      child: MultiBlocProvider(
+        providers: [
+          BlocProvider(
+            create: (context) => AuthBloc(authRepository: authRepository)
+              ..add(AuthCheckRequested()),
+          ),
+        ],
+        child: MaterialApp(
+          title: 'Financial Tracker',
+          theme: ThemeData(
+            primarySwatch: Colors.blue,
+            useMaterial3: true,
+          ),
+          home: const AppNavigator(),
         ),
-        home: const AppNavigator(),
       ),
     );
   }
@@ -61,26 +75,13 @@ class AppNavigator extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         } else if (state is Authenticated) {
-          // If authenticated, go to a temporary Dashboard
-          return Scaffold(
-            appBar: AppBar(title: const Text('Dashboard')),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('Welcome, ${state.user.fullName}!'),
-                  ElevatedButton(
-                    onPressed: () {
-                      context.read<AuthBloc>().add(AuthLogoutRequested());
-                    },
-                    child: const Text('Logout'),
-                  )
-                ],
-              ),
+          return BlocProvider(
+            create: (context) => DashboardBloc(
+              financeRepository: context.read<FinanceRepository>(),
             ),
+            child: const DashboardScreen(),
           );
         } else {
-          // Unauthenticated or Error, show Login Screen
           return const LoginScreen();
         }
       },

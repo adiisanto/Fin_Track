@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.v1 import auth
+from app.api.v1 import auth, finance
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -19,6 +19,7 @@ app.add_middleware(
 
 # Include Routers
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
+app.include_router(finance.router, prefix=f"{settings.API_V1_STR}", tags=["finance"])
 
 @app.get("/")
 async def root():
