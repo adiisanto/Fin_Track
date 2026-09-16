@@ -65,7 +65,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
-                      value: _selectedCurrency,
+                      initialValue: _selectedCurrency,
                       decoration: const InputDecoration(labelText: 'Base Currency', border: OutlineInputBorder()),
                       items: ['IDR', 'USD', 'EUR'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                       onChanged: (val) {

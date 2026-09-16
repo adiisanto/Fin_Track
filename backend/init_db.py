@@ -63,12 +63,12 @@ async def seed_data():
         # Flush to get primary keys for next steps (accounts)
         await session.flush()
 
-        # 4. Seed Payment Methods
+        # 4. Seed Payment Methods (Sebagai Template Sistem Default)
         methods = [
-            PaymentMethod(code="CASH", name="Tunai", from_account="1001"),
-            PaymentMethod(code="BANK_TRANSFER", name="Transfer Bank", from_account="1002"),
-            PaymentMethod(code="E_WALLET", name="E-Wallet", from_account="1003"),
-            PaymentMethod(code="CREDIT_CARD", name="Kartu Kredit", from_account="2001"),
+            PaymentMethod(code="CASH", name="Tunai", from_account="1001", user_id=None, is_template=True, is_public=True),
+            PaymentMethod(code="BANK_TRANSFER", name="Transfer Bank", from_account="1002", user_id=None, is_template=True, is_public=True),
+            PaymentMethod(code="E_WALLET", name="E-Wallet", from_account="1003", user_id=None, is_template=True, is_public=True),
+            PaymentMethod(code="CREDIT_CARD", name="Kartu Kredit", from_account="2001", user_id=None, is_template=True, is_public=True),
         ]
         session.add_all(methods)
 

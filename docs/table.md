@@ -138,10 +138,17 @@ Menyimpan metode pembayaran yang terikat langsung ke akun General Ledger.
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | UUID | Primary Key | Identifier unik metode |
-| `code` | VARCHAR(30) | Unique, Not Null | Kode metode (CASH, BANK) |
-| `name` | VARCHAR(50) | Not Null | Nama metode pembayaran |
-| `from_account` | VARCHAR(10) | FK -> `mst_account.account`| Terikat pada akun GL kas/bank |
-| `is_active` | BOOLEAN | Default: True | Status aktif |
+| `user_id` | UUID | FK -> `users.id`, Nullable | Pemilik metode (jika null = template) |
+| `code` | VARCHAR(30) | Not Null | Kode metode pembayaran |
+| `name` | VARCHAR(100) | Not Null | Nama / label metode |
+| `from_account` | VARCHAR(10) | FK -> `mst_account.account`, Nullable | GL Account referensi |
+| `is_active` | BOOLEAN | Default: True | Status aktif (untuk soft-delete) |
+| `is_template` | BOOLEAN | Default: False | Apakah data ini template? |
+| `is_public` | BOOLEAN | Default: False | Apakah template ini publik? |
+| `created_at` | TIMESTAMP | Default: now() | Waktu pembuatan |
+| `updated_at` | TIMESTAMP | Default: now() | Waktu modifikasi terakhir |
+
+**Catatan**: Terdapat *composite unique constraint* pada `(user_id, code, is_template)`.
 
 ### 6. `transactions`
 Menyimpan data transaksi pemasukan maupun pengeluaran.

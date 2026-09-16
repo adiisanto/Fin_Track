@@ -56,14 +56,102 @@ class FinanceRepository {
     }
   }
 
-  Future<List<PaymentMethod>> getPaymentMethods() async {
+  Future<List<PaymentMethod>> getPaymentMethods({bool includeInactive = false}) async {
     try {
-      final response = await dio.get('/api/v1/payment-methods');
+      final response = await dio.get('/api/v1/payment-methods', queryParameters: {'include_inactive': includeInactive});
       return (response.data['data'] as List)
           .map((json) => PaymentMethod.fromJson(json))
           .toList();
     } on DioException catch (e) {
       throw Exception(e.response?.data['detail'] ?? 'Failed to load payment methods');
+    }
+  }
+
+  Future<PaymentMethod> createPaymentMethod({
+    required String code,
+    required String name,
+    String? fromAccount,
+    bool isActive = true,
+  }) async {
+    try {
+      final response = await dio.post('/api/v1/payment-methods', data: {
+        'code': code,
+        'name': name,
+        'from_account': fromAccount,
+        'is_active': isActive,
+      });
+      return PaymentMethod.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to create payment method');
+    }
+  }
+
+  Future<PaymentMethod> updatePaymentMethod(String id, {
+    String? code,
+    String? name,
+    String? fromAccount,
+    bool? isActive,
+  }) async {
+    try {
+      final data = <String, dynamic>{};
+      if (code != null) data['code'] = code;
+      if (name != null) data['name'] = name;
+      if (fromAccount != null) data['from_account'] = fromAccount;
+      if (isActive != null) data['is_active'] = isActive;
+
+      final response = await dio.put('/api/v1/payment-methods/$id', data: data);
+      return PaymentMethod.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to update payment method');
+    }
+  }
+
+  Future<void> deletePaymentMethod(String id) async {
+    try {
+      await dio.delete('/api/v1/payment-methods/$id');
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to delete payment method');
+    }
+  }
+
+  Future<List<PaymentMethod>> getPublicTemplates() async {
+    try {
+      final response = await dio.get('/api/v1/payment-methods/templates/public');
+      return (response.data['data'] as List)
+          .map((json) => PaymentMethod.fromJson(json))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to load public templates');
+    }
+  }
+
+  Future<Map<String, dynamic>> previewTemplate(String templateId) async {
+    try {
+      final response = await dio.get('/api/v1/payment-methods/templates/$templateId/preview');
+      return response.data['data'];
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to preview template');
+    }
+  }
+
+  Future<PaymentMethod> copyTemplate(String templateId) async {
+    try {
+      final response = await dio.post('/api/v1/payment-methods/templates/$templateId/copy');
+      return PaymentMethod.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to copy template');
+    }
+  }
+
+  Future<List<MSTAccount>> lookupAccounts({String? q}) async {
+    try {
+      final queryParams = q != null ? {'q': q} : null;
+      final response = await dio.get('/api/v1/accounts/lookup', queryParameters: queryParams);
+      return (response.data['data'] as List)
+          .map((json) => MSTAccount.fromJson(json))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to lookup accounts');
     }
   }
 

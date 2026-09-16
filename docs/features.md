@@ -27,7 +27,7 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 | 2 | **Dashboard Summary** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Rekap pemasukan, pengeluaran, net profit/loss, filter timeframe |
 | 3 | **Expense Tracking (Catat Pengeluaran)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Form catat biaya, konversi kurs otomatis, binding GL account |
 | 4 | **Multi-Currency Management & Rates** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen mata uang oleh superadmin & konversi kurs otomatis |
-| 5 | **Payment Methods & GL Mapping** | Master/Finance | 🟡 Parsial | ⚠️ Manual Verified | Relasi ke `mst_account` aktif; form CRUD payment method belum ada |
+| 5 | **Payment Methods & GL Mapping** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen metode pembayaran user-scoped, copy template publik, relasi akun GL, & soft delete |
 | 6 | **Income Tracking (Catat Pemasukan)** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Backend sudah siap menerima type `INCOME`, form UI di Flutter belum dibuat |
 | 7 | **Transaction History & Filter** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Halaman riwayat daftar transaksi dengan pagination & search |
 | 8 | **General Ledger (COA Management)** | Finance | 🟡 Parsial | ⏳ Belum Dites | Skema tabel `mst_account` & seed data sudah siap; CRUD UI belum ada |

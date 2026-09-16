@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
-from typing import List, Any
+from sqlalchemy import select, func, and_, or_, delete
+from typing import List, Any, Optional
 from datetime import datetime, timezone, timedelta
 import calendar
 
@@ -11,7 +11,10 @@ from app.models.finance import MST_Account, Currency, CurrencyRate, PaymentMetho
 from app.schemas.finance import (
     CurrencyCreate,
     CurrencyResponse,
+    PaymentMethodCreate,
+    PaymentMethodUpdate,
     PaymentMethodResponse,
+    AccountLookupResponse,
     CurrencyRateResponse,
     TransactionCreate,
     TransactionResponse,
@@ -149,21 +152,290 @@ async def delete_currency(
     }
 
 @router.get("/payment-methods", response_model=dict)
-async def get_payment_methods(db: AsyncSession = Depends(get_db)):
-    # Join with MST_Account to get account description
-    query = select(PaymentMethod, MST_Account).join(MST_Account, PaymentMethod.from_account == MST_Account.account).where(PaymentMethod.is_active == True)
+async def get_payment_methods(
+    include_inactive: bool = Query(False),
+    is_template: bool = Query(False),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(PaymentMethod, MST_Account).outerjoin(
+        MST_Account, PaymentMethod.from_account == MST_Account.account
+    ).where(
+        PaymentMethod.user_id == current_user.id,
+        PaymentMethod.is_template == is_template
+    )
+    if not include_inactive:
+        query = query.where(PaymentMethod.is_active == True)
+    
     result = await db.execute(query)
     
     data = []
     for pm, acc in result.all():
         pm_resp = PaymentMethodResponse.model_validate(pm)
-        pm_resp.account_description = acc.description
+        if acc:
+            pm_resp.account_description = acc.description
         data.append(pm_resp.model_dump())
 
-    return {
-        "success": True,
-        "data": data
-    }
+    return {"success": True, "data": data}
+
+@router.post("/payment-methods", response_model=dict, status_code=201)
+async def create_payment_method(
+    body: PaymentMethodCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    code_upper = body.code.strip().upper()
+    
+    # Check duplicate
+    existing = await db.execute(select(PaymentMethod).where(
+        PaymentMethod.user_id == current_user.id,
+        PaymentMethod.code == code_upper,
+        PaymentMethod.is_template == body.is_template
+    ))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Kode metode pembayaran sudah digunakan.")
+
+    # Check from_account validity
+    if body.from_account:
+        acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account))
+        if not acc.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Akun GL tidak valid.")
+
+    new_pm = PaymentMethod(
+        user_id=current_user.id,
+        code=code_upper,
+        name=body.name,
+        from_account=body.from_account,
+        is_active=body.is_active,
+        is_template=body.is_template,
+        is_public=body.is_public,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    db.add(new_pm)
+    await db.commit()
+    await db.refresh(new_pm)
+
+    pm_resp = PaymentMethodResponse.model_validate(new_pm)
+    if body.from_account:
+        acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account))
+        acc_obj = acc.scalar_one()
+        pm_resp.account_description = acc_obj.description
+
+    return {"success": True, "data": pm_resp.model_dump()}
+
+@router.put("/payment-methods/{id}", response_model=dict)
+async def update_payment_method(
+    id: str,
+    body: PaymentMethodUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(PaymentMethod).where(
+        PaymentMethod.id == id,
+        PaymentMethod.user_id == current_user.id
+    ))
+    pm = result.scalar_one_or_none()
+    if not pm:
+        raise HTTPException(status_code=404, detail="Metode pembayaran tidak ditemukan atau Anda tidak memiliki hak akses.")
+    
+    if body.code is not None:
+        code_upper = body.code.strip().upper()
+        # check duplicate
+        if code_upper != pm.code:
+            existing = await db.execute(select(PaymentMethod).where(
+                PaymentMethod.user_id == current_user.id,
+                PaymentMethod.code == code_upper,
+                PaymentMethod.is_template == (body.is_template if body.is_template is not None else pm.is_template)
+            ))
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail="Kode metode pembayaran sudah digunakan.")
+        pm.code = code_upper
+
+    if body.name is not None:
+        pm.name = body.name
+
+    if body.from_account is not None:
+        # allow empty account
+        if body.from_account == "":
+            pm.from_account = None
+        else:
+            acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account))
+            if not acc.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Akun GL tidak valid.")
+            pm.from_account = body.from_account
+
+    if body.is_active is not None:
+        pm.is_active = body.is_active
+    if body.is_template is not None:
+        pm.is_template = body.is_template
+    if body.is_public is not None:
+        pm.is_public = body.is_public
+
+    pm.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(pm)
+
+    pm_resp = PaymentMethodResponse.model_validate(pm)
+    if pm.from_account:
+        acc = await db.execute(select(MST_Account).where(MST_Account.account == pm.from_account))
+        acc_obj = acc.scalar_one()
+        pm_resp.account_description = acc_obj.description
+
+    return {"success": True, "data": pm_resp.model_dump()}
+
+@router.delete("/payment-methods/{id}", response_model=dict)
+async def delete_payment_method(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(PaymentMethod).where(
+        PaymentMethod.id == id,
+        PaymentMethod.user_id == current_user.id
+    ))
+    pm = result.scalar_one_or_none()
+    if not pm:
+        raise HTTPException(status_code=404, detail="Metode pembayaran tidak ditemukan atau Anda tidak memiliki hak akses.")
+
+    # Soft delete
+    pm.is_active = False
+    pm.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"success": True, "message": "Metode pembayaran berhasil dinonaktifkan (soft deleted)."}
+
+@router.get("/payment-methods/templates/public", response_model=dict)
+async def get_public_templates(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(PaymentMethod, MST_Account).outerjoin(
+        MST_Account, PaymentMethod.from_account == MST_Account.account
+    ).where(
+        PaymentMethod.is_template == True,
+        PaymentMethod.is_public == True
+    )
+    result = await db.execute(query)
+    
+    data = []
+    for pm, acc in result.all():
+        pm_resp = PaymentMethodResponse.model_validate(pm)
+        if acc:
+            pm_resp.account_description = acc.description
+        data.append(pm_resp.model_dump())
+
+    return {"success": True, "data": data}
+
+@router.get("/payment-methods/templates/{template_id}/preview", response_model=dict)
+async def preview_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Cari template
+    result = await db.execute(
+        select(PaymentMethod, MST_Account).outerjoin(
+            MST_Account, PaymentMethod.from_account == MST_Account.account
+        ).where(
+            PaymentMethod.id == template_id,
+            PaymentMethod.is_template == True,
+            or_(PaymentMethod.is_public == True, PaymentMethod.user_id == current_user.id)
+        )
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Template tidak ditemukan atau bersifat privat.")
+    
+    pm, acc = row
+    pm_resp = PaymentMethodResponse.model_validate(pm)
+    if acc:
+        pm_resp.account_description = acc.description
+
+    # Cek konflik kode
+    existing = await db.execute(select(PaymentMethod).where(
+        PaymentMethod.user_id == current_user.id,
+        PaymentMethod.code == pm.code,
+        PaymentMethod.is_template == False
+    ))
+    is_conflict = existing.scalar_one_or_none() is not None
+
+    data = pm_resp.model_dump()
+    data["is_code_conflict"] = is_conflict
+    if is_conflict:
+        data["conflict_message"] = f"Kode '{pm.code}' sudah terdaftar pada metode pembayaran Anda. Menyalin template ini akan memberi akhiran _COPY pada kode."
+
+    return {"success": True, "data": data}
+
+@router.post("/payment-methods/templates/{template_id}/copy", response_model=dict, status_code=201)
+async def copy_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Validasi template
+    result = await db.execute(select(PaymentMethod).where(
+        PaymentMethod.id == template_id,
+        PaymentMethod.is_template == True,
+        or_(PaymentMethod.is_public == True, PaymentMethod.user_id == current_user.id)
+    ))
+    template = result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template tidak ditemukan atau bersifat privat.")
+
+    # Cek konflik kode
+    new_code = template.code
+    existing = await db.execute(select(PaymentMethod).where(
+        PaymentMethod.user_id == current_user.id,
+        PaymentMethod.code == new_code,
+        PaymentMethod.is_template == False
+    ))
+    if existing.scalar_one_or_none():
+        new_code = f"{new_code}_COPY"
+        # Optional: check if _COPY also exists and handle, but keeping it simple as per spec
+    
+    new_pm = PaymentMethod(
+        user_id=current_user.id,
+        code=new_code,
+        name=template.name,
+        from_account=template.from_account,
+        is_active=True,
+        is_template=False,
+        is_public=False,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    db.add(new_pm)
+    await db.commit()
+    await db.refresh(new_pm)
+
+    pm_resp = PaymentMethodResponse.model_validate(new_pm)
+    if template.from_account:
+        acc = await db.execute(select(MST_Account).where(MST_Account.account == template.from_account))
+        if acc_obj := acc.scalar_one_or_none():
+            pm_resp.account_description = acc_obj.description
+
+    return {"success": True, "data": pm_resp.model_dump()}
+
+@router.get("/accounts/lookup", response_model=dict)
+async def lookup_accounts(
+    q: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(MST_Account).where(MST_Account.active == True)
+    if q:
+        query = query.where(or_(
+            MST_Account.account.ilike(f"%{q}%"),
+            MST_Account.description.ilike(f"%{q}%")
+        ))
+    
+    result = await db.execute(query)
+    data = []
+    for acc in result.scalars().all():
+        data.append(AccountLookupResponse.model_validate(acc).model_dump())
+
+    return {"success": True, "data": data}
 
 @router.get("/currency-rates/latest", response_model=dict)
 async def get_latest_currency_rate(
