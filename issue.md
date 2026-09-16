@@ -1,221 +1,251 @@
-# [FEATURE] Autentikasi & Manajemen Pengguna (Register & Login)
-
-## 1. Deskripsi Fitur (Overview)
-Fitur ini menyediakan mekanisme pendaftaran akun baru (*Register / Sign Up*) dan proses masuk (*Login / Sign In*) yang aman bagi pengguna aplikasi Financial Tracker di berbagai platform (Mobile, Tablet, Web). Mengingat aplikasi ini mengelola data finansial yang sensitif, sistem autentikasi harus menerapkan standar keamanan industri (JWT, hashing modern, rate limiting, dan penyimpanan kredensial aman di client).
+# [FEATURE] Manajemen Multi-Currency (Admin / Superadmin Only)
 
 ---
 
-## 2. User Stories
-* **Sebagai pengguna baru**, saya ingin dapat membuat akun dengan email, nama lengkap, dan password yang kuat, serta memilih mata uang dasar (default: IDR) agar data transaksi saya tersimpan dengan aman dan terisolasi.
-* **Sebagai pengguna terdaftar**, saya ingin dapat login menggunakan email dan password agar dapat mengakses riwayat transaksi dan dashboard keuangan saya.
-* **Sebagai pengguna di mobile/tablet/web**, saya ingin sesi login saya tetap bertahan (via *refresh token*) tanpa harus mengetik ulang password setiap kali membuka aplikasi, namun tetap aman jika token kedaluwarsa.
-* **Sebagai pengguna**, saya ingin dapat melakukan *logout* dari perangkat agar data keuangan saya tidak dapat diakses orang lain.
+## 📌 PANDUAN UNTUK DEVELOPER / AI AGENT
+> **PENTING DIBACA SEBELUM CODING:**
+> 1. Ikuti spesifikasi teknis, arsitektur, dan struktur file yang telah ditentukan di bawah ini secara ketat.
+> 2. Proyek ini menerapkan pembagian arsitektur:
+>    - **Backend**: FastAPI, SQLAlchemy 2.0 (Async + asyncpg), Pydantic v2, Python 3.13.
+>    - **Frontend**: Flutter (BLoC pattern, Dio client, Clean Architecture 3 lapis: `data/`, `domain/`, `presentation/`).
+> 3. Halaman dan Endpoint ini bersifat **Restricted / Superadmin Only** (User biasa **DILARANG** mengakses endpoint penambahan/penghapusan currency maupun layarnya di frontend).
+> 4. Selesaikan pekerjaan secara berurutan sesuai langkah kerja:
+>    - **Langkah 1**: Pembaruan Skema Database & Seed (`backend/app/models/`, `backend/init_db.py`, `docs/table.md`).
+>    - **Langkah 2**: Backend API Endpoints & Auth Dependency (`backend/app/api/v1/`, `backend/app/schemas/`, `docs/routes.md`).
+>    - **Langkah 3**: Frontend BLoC & Screen (`frontend/lib/features/currency/` atau `finance/`).
+>    - **Langkah 4**: Pembaruan Dokumen Pelacak (`docs/features.md`).
 
 ---
 
-## 3. Ruang Lingkup & Kebutuhan Fungsional (Functional Requirements)
+## 1. Ringkasan Fitur (Feature Overview)
 
-### A. Pendaftaran Pengguna Baru (Registration)
-1. **Input Fields:**
-   - Nama Lengkap (`full_name`): Wajib, minimal 2 karakter, maksimal 100 karakter.
-   - Email (`email`): Wajib, format email valid, case-insensitive, unik di database.
-   - Password (`password`): Wajib, minimal 8 karakter, mengandung minimal 1 huruf besar, 1 huruf kecil, dan 1 angka/simbol.
-   - Mata Uang Utama (`base_currency`): Opsional, default `"IDR"`.
-2. **Business Rules:**
-   - Sistem menolak pendaftaran jika email sudah terdaftar (`409 Conflict`).
-   - Password di-hash menggunakan algoritma **Argon2id** (atau bcrypt dengan work factor memadai). Password mentah tidak boleh disimpan atau dicatat di log aplikasi.
-   - Otomatis membuat *default wallet* pertama (misal: "Dompet Tunai / Cash") dan kategori bawaan (Makanan, Transportasi, Gaji, dll.) setelah registrasi berhasil.
-   - Respon berhasil mengembalikan data profil pengguna dan pasangan token (Access Token & Refresh Token).
-
-### B. Masuk ke Akun (Login)
-1. **Input Fields:**
-   - Email (`email`): Format email valid.
-   - Password (`password`): Plaintext dari client via HTTPS.
-2. **Business Rules:**
-   - Verifikasi kecocokan email dan hash password.
-   - Jika kredensial salah, berikan pesan generik: *"Email atau password salah"* (`401 Unauthorized`) untuk mencegah user enumeration.
-   - Mengembalikan **Access Token (JWT)** (masa berlaku singkat: 15–30 menit) dan **Refresh Token** (masa berlaku panjang: 7–30 hari).
-   - Memperbarui field `last_login_at` di database.
-
-### C. Token Refresh & Logout
-1. **Refresh Token Flow:**
-   - Endpoint khusus untuk menukar Refresh Token yang valid dengan Access Token baru tanpa meminta user login ulang.
-2. **Logout:**
-   - Menghapus token di sisi client (`flutter_secure_storage`).
-   - Me-blacklist / mencabut Refresh Token di sisi server (disimpan di Redis dengan TTL sesuai masa aktif token).
+Fitur ini menyediakan antarmuka dan API bagi pengguna dengan hak akses **Superadmin** untuk mengelola daftar mata uang (*multi-currency*) yang berlaku di dalam sistem Fin_Track:
+1. **Daftar Mata Uang (List Currencies):** Menampilkan seluruh data mata uang yang ada di tabel `currencies`, termasuk waktu dibuat (`created_at` dalam format UTC).
+2. **Tambah Mata Uang (Add Currency):** Form modal/dialog untuk menambahkan mata uang baru dengan validasi kode ISO 3 huruf kapital unik (contoh: `JPY`, `GBP`). Field `created_at` otomatis terisi waktu saat penambahan dalam UTC.
+3. **Hapus Mata Uang (Delete Currency):** 
+   - Tombol hapus dengan proteksi integritas data:
+     - **TIDAK BISA DIHAPUS** jika kode mata uang sudah pernah digunakan di tabel transaksi (`transactions`). Backend wajib menolak dan mengembalikan HTTP 400 Bad Request.
+     - **BISA DIHAPUS** jika belum pernah tercatat di transaksi.
+   - Jika berhasil dihapus, **seluruh data kurs terkait di mana mata uang tersebut menjadi mata uang asal (`currency_rates.from_currency`) wajib ikut dihapus**.
 
 ---
 
-## 4. Kebutuhan Non-Fungsional & Keamanan (Security & NFR)
-* **Rate Limiting (Brute-Force Protection):** Batasi maksimal 5 percobaan login gagal per IP/Email dalam kurun waktu 1 menit menggunakan Redis.
-* **Payload Validation:** Validasi ketat DTO request menggunakan Pydantic v2 (Backend) dan Form Validation regex (Flutter).
-* **Audit Trail:** Mencatat log percobaan login gagal dan sukses secara terstruktur (tanpa mengekspos password).
-* **Storage Keamanan Client:**
-  - Android: `EncryptedSharedPreferences` / KeyStore via `flutter_secure_storage`.
-  - iOS: `Keychain` via `flutter_secure_storage`.
-  - Web: Web Cryptography API / HttpOnly cookie or secure storage.
+## 2. Kebutuhan Database & Relasi (PostgreSQL / SQLAlchemy)
+
+### A. Modifikasi Tabel `users`
+Tambahkan kolom untuk membedakan user biasa dengan superadmin:
+- **File target**: `backend/app/models/user.py`
+- **Kolom baru**:
+  | Kolom | Tipe Data | Constraint | Keterangan |
+  | :--- | :--- | :--- | :--- |
+  | `is_superuser` | `BOOLEAN` | `default=False, nullable=False` | `True` jika user adalah superadmin |
+
+### B. Modifikasi Tabel `currencies`
+Tambahkan kolom pencatatan waktu pembuatan data currency dalam format UTC:
+- **File target**: `backend/app/models/finance.py`
+- **Kolom baru**:
+  | Kolom | Tipe Data | Constraint | Keterangan |
+  | :--- | :--- | :--- | :--- |
+  | `created_at` | `TIMESTAMPTZ` | `server_default=func.now(), nullable=False` | Waktu dibuat dalam UTC |
+
+### C. Pembaruan Seed Data (`backend/init_db.py`)
+1. Pastikan user superadmin dibuat atau diset saat inisialisasi:
+   - Contoh: Akun email `admin@fintrack.com` dengan password ter-hash dan `is_superuser=True`.
+2. Pastikan entri seed mata uang default (`IDR`, `USD`, `EUR`, `SGD`) menyertakan/mengisi nilai `created_at`.
 
 ---
 
-## 5. Spesifikasi Kontrak API (FastAPI)
+## 3. Spesifikasi API Backend (FastAPI)
 
-### 1. `POST /api/v1/auth/register`
-* **Request Body:**
-```json
-{
-  "full_name": "Budi Santoso",
-  "email": "budi.santoso@example.com",
-  "password": "PasswordSuperAman123!",
-  "base_currency": "IDR"
-}
-```
-* **Response (201 Created):**
+Semua endpoint berikut berada di bawah prefix `/api/v1`.
+
+### A. Auth Helper / Dependency Baru
+- **File**: `backend/app/api/deps.py`
+- **Fungsi**: `get_current_superadmin(current_user: User = Depends(get_current_user)) -> User`
+  - Validasi: `if not current_user.is_superuser:`
+  - Raise: `HTTPException(status_code=403, detail="Akses ditolak. Fitur ini hanya untuk Superadmin.")`
+
+---
+
+### B. Endpoint 1: Mendapatkan List Mata Uang
+- **Endpoint**: `GET /api/v1/currencies`
+- **Akses**: Public / Authenticated User
+- **Method**: `GET`
+- **Query Param (Opsional)**: `include_inactive=true/false` (default: `false` untuk publik, `true` jika admin)
+- **Response (200 OK)**:
 ```json
 {
   "success": true,
-  "message": "Registrasi berhasil.",
-  "data": {
-    "user": {
-      "id": "c1f7a2b9-3e5f-4a61-9c88-123456789abc",
-      "full_name": "Budi Santoso",
-      "email": "budi.santoso@example.com",
-      "base_currency": "IDR",
-      "created_at": "2026-09-14T11:57:00Z"
+  "data": [
+    {
+      "code": "IDR",
+      "name": "Indonesian Rupiah",
+      "symbol": "Rp",
+      "is_active": true,
+      "created_at": "2026-09-16T10:00:00Z"
     },
-    "tokens": {
-      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "token_type": "bearer",
-      "expires_in": 1800
+    {
+      "code": "USD",
+      "name": "US Dollar",
+      "symbol": "$",
+      "is_active": true,
+      "created_at": "2026-09-16T10:00:00Z"
     }
-  }
+  ]
 }
 ```
 
-### 2. `POST /api/v1/auth/login`
-* **Request Body:**
+---
+
+### C. Endpoint 2: Menambahkan Mata Uang Baru (Superadmin Only)
+- **Endpoint**: `POST /api/v1/admin/currencies`
+- **Akses**: **Protected (Superadmin Only)** -> Gunakan `Depends(get_current_superadmin)`
+- **Request Body**:
 ```json
 {
-  "email": "budi.santoso@example.com",
-  "password": "PasswordSuperAman123!"
+  "code": "JPY",
+  "name": "Japanese Yen",
+  "symbol": "¥",
+  "is_active": true
 }
 ```
-* **Response (200 OK):**
+- **Aturan Validasi Backend (Pydantic / Service)**:
+  1. `code`: Wajib berupa 3 huruf alfabet, otomatis di-*uppercase* (`JPY`).
+  2. Cek apakah `code` sudah terdaftar di tabel `currencies`. Jika sudah ada, kembalikan:
+     - `HTTP 409 Conflict`: `{"detail": "Kode mata uang JPY sudah terdaftar."}`
+  3. Set kolom `created_at` menggunakan waktu sekarang dalam UTC (`datetime.now(timezone.utc)`).
+- **Response (201 Created)**:
 ```json
 {
   "success": true,
-  "message": "Login berhasil.",
+  "message": "Mata uang JPY berhasil ditambahkan.",
   "data": {
-    "user": {
-      "id": "c1f7a2b9-3e5f-4a61-9c88-123456789abc",
-      "full_name": "Budi Santoso",
-      "email": "budi.santoso@example.com",
-      "base_currency": "IDR"
-    },
-    "tokens": {
-      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "token_type": "bearer",
-      "expires_in": 1800
-    }
+    "code": "JPY",
+    "name": "Japanese Yen",
+    "symbol": "¥",
+    "is_active": true,
+    "created_at": "2026-09-16T12:45:30.123456Z"
   }
 }
 ```
 
-### 3. `POST /api/v1/auth/refresh`
-* **Request Body:**
-```json
-{
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-* **Response (200 OK):**
+---
+
+### D. Endpoint 3: Menghapus Mata Uang (Superadmin Only)
+- **Endpoint**: `DELETE /api/v1/admin/currencies/{code}`
+- **Akses**: **Protected (Superadmin Only)** -> Gunakan `Depends(get_current_superadmin)`
+- **Path Parameter**: `code` (string, misal: `JPY`)
+- **Aturan Bisnis & Integritas Data**:
+  1. Cari currency berdasarkan `code`. Jika data tidak ditemukan:
+     - Return `HTTP 404 Not Found`: `{"detail": "Mata uang tidak ditemukan."}`
+  2. **Validasi Keterikatan Transaksi**:
+     - Jalankan query ke tabel `transactions` untuk mengecek apakah ada transaksi yang menggunakan `currency_code == code`.
+     - **JIKA ADA**: Batalkan proses penghapusan!
+     - Return `HTTP 400 Bad Request`:
+       ```json
+       {
+         "detail": "Mata uang JPY tidak dapat dihapus karena sudah digunakan pada data transaksi."
+       }
+       ```
+  3. **Pembersihan Data Kurs (`currency_rates`)**:
+     - **JIKA TIDAK ADA TRANSAKSI TERKAIT**:
+     - Hapus semua data pada tabel `currency_rates` yang memiliki `from_currency == code`.
+       *(Eksekusi: `DELETE FROM currency_rates WHERE from_currency = :code`)*.
+     - Hapus record currency dari tabel `currencies`.
+     - Lakukan `db.commit()`.
+- **Response (200 OK)**:
 ```json
 {
   "success": true,
-  "data": {
-    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "token_type": "bearer",
-    "expires_in": 1800
-  }
+  "message": "Mata uang JPY beserta data kurs terkait berhasil dihapus."
 }
 ```
 
-### 4. `GET /api/v1/auth/me` *(Protected Route)*
-* **Headers:** `Authorization: Bearer <access_token>`
-* **Response (200 OK):** Mengembalikan data profil user saat ini.
+---
+
+## 4. Spesifikasi Frontend (Flutter)
+
+### A. Domain & Data Layer
+- **Model**: `CurrencyModel` (menambahkan field `DateTime createdAt`).
+- **Repository**: Tambahkan fungsi pada `FinanceRepository` (atau buat `CurrencyRepository`):
+  - `Future<List<CurrencyModel>> getCurrencies({bool includeInactive = false})`
+  - `Future<CurrencyModel> addCurrency({required String code, required String name, required String symbol, bool isActive = true})`
+  - `Future<void> deleteCurrency(String code)`
+
+### B. State Management (`CurrencyBloc`)
+- **Folder**: `frontend/lib/features/currency/presentation/bloc/` (atau di bawah `finance/`)
+- **Events**:
+  - `CurrencyFetchRequested()`
+  - `CurrencyCreateRequested(code, name, symbol, isActive)`
+  - `CurrencyDeleteRequested(code)`
+- **States**:
+  - `CurrencyInitial`
+  - `CurrencyLoading`
+  - `CurrencyLoaded(List<CurrencyModel> currencies)`
+  - `CurrencyOperationSuccess(String message)`
+  - `CurrencyError(String errorMessage)`
+
+### C. UI Screen: `CurrencyManagementScreen`
+- **File**: `frontend/lib/features/currency/presentation/screens/currency_management_screen.dart`
+- **Proteksi Halaman (Role Check)**:
+  - Sebelum merender, periksa apakah `user.isSuperuser == true`.
+  - Jika bukan superadmin, tampilkan teks *"Akses Ditolak: Halaman ini hanya untuk Superadmin"*.
+- **Tampilan Utama**:
+  - **AppBar**: Judul *"Manajemen Mata Uang"*.
+  - **Tombol Tambah**: Floating Action Button (FAB) atau tombol di AppBar bertuliskan *"+ Tambah Mata Uang"*.
+  - **Body (List / Table)**:
+    - Menampilkan kartu atau `DataTable` yang memuat:
+      - Kode (misal: `IDR`, `USD`)
+      - Nama (misal: `Indonesian Rupiah`)
+      - Simbol (misal: `Rp`)
+      - Waktu Dibuat (`created_at` diformat: `YYYY-MM-DD HH:mm UTC`)
+      - Status (`Aktif` / `Nonaktif`)
+      - Tombol Aksi: Icon Hapus (merah).
+- **Dialog Tambah Mata Uang**:
+  - Input `Code`: Maksimal 3 huruf (auto-capitalized).
+  - Input `Name`: Teks nama lengkap mata uang.
+  - Input `Symbol`: Teks simbol ($, Rp, €, ¥).
+  - Tombol Batal & Simpan.
+  - Validasi: Semua field wajib diisi.
+- **Dialog Konfirmasi Hapus**:
+  - Menampilkan modal dialog: *"Apakah Anda yakin ingin menghapus mata uang [CODE]? Semua data kurs terkait juga akan dihapus."*
+  - Tombol *Batal* & *Hapus*.
+- **Handling Error Responsif**:
+  - Jika penghapusan gagal karena mata uang sudah terpakai di transaksi (HTTP 400), tampilkan `SnackBar` merah dengan pesan error langsung dari backend.
+  - Jika berhasil, tampilkan `SnackBar` hijau dan otomatis *reload* list mata uang.
 
 ---
 
-## 6. Desain Entitas Database (PostgreSQL / SQLAlchemy Model)
+## 5. Pembaruan Dokumentasi Wajib (Docs Updates)
 
-### Tabel `users`:
-| Kolom | Tipe Data | Keterangan |
-| :--- | :--- | :--- |
-| `id` | `UUID` | Primary Key, default `gen_random_uuid()` |
-| `email` | `VARCHAR(255)` | Unique, Indexed, Not Null |
-| `password_hash` | `VARCHAR(255)` | Not Null (Argon2id) |
-| `full_name` | `VARCHAR(100)` | Not Null |
-| `base_currency` | `VARCHAR(3)` | Default `'IDR'`, Not Null |
-| `is_active` | `BOOLEAN` | Default `true`, Not Null |
-| `created_at` | `TIMESTAMPTZ` | Default `NOW()`, Not Null |
-| `updated_at` | `TIMESTAMPTZ` | Default `NOW()`, Not Null |
-| `last_login_at`| `TIMESTAMPTZ` | Nullable |
+Setelah pengerjaan kode selesai, developer/AI wajib memperbarui file-file dokumentasi berikut:
+1. **`docs/table.md`**:
+   - Tambahkan kolom `is_superuser` pada tabel `users`.
+   - Tambahkan kolom `created_at` pada tabel `currencies`.
+2. **`docs/routes.md`**:
+   - Tambahkan rute `POST /api/v1/admin/currencies` dan `DELETE /api/v1/admin/currencies/{code}`.
+   - Tambahkan layar `CurrencyManagementScreen` pada bagian Frontend navigation.
+3. **`docs/features.md`**:
+   - Update baris fitur `Multi-Currency & Exchange Rates`: Ubah status pengerjaan dan tambahkan catatan implementasi manajemen mata uang admin.
 
 ---
 
-## 7. Desain Frontend Flutter
+## 6. Kriteria Penerimaan (Definition of Done / DoD)
 
-### A. Tampilan UI
-1. **Screen: `RegisterScreen`**
-   - Form Nama, Email, Password, Konfirmasi Password.
-   - Pilihan Mata Uang Default (Dropdown/Searchable modal).
-   - Validasi error inline (misal: "Password minimal 8 karakter").
-   - Tombol toggle tampilkan/sembunyikan password (*eye icon*).
-2. **Screen: `LoginScreen`**
-   - Form Email & Password.
-   - Checkbox "Ingat Saya" / auto-login.
-   - Tombol navigasi ke Register & Lupa Password.
-3. **Responsivitas Layout:**
-   - **Mobile:** Tampilan full screen dengan scrollable view (mencegah overflow saat keyboard muncul).
-   - **Tablet & Web:** Card dialog di tengah layar dengan background branding finansial yang elegan (maksimal lebar card: 450px).
+### Backend:
+- [ ] Kolom `is_superuser` terpasang di model `User` dan `created_at` terpasang di model `Currency`.
+- [ ] Dependency `get_current_superadmin` menolak request dengan HTTP 403 jika user bukan superadmin.
+- [ ] `POST /api/v1/admin/currencies` berhasil menyimpan data baru dengan `created_at` berformat UTC.
+- [ ] Validasi kode duplikat menghasilkan HTTP 409.
+- [ ] `DELETE /api/v1/admin/currencies/{code}` menolak penghapusan dengan HTTP 400 jika mata uang terkait sudah digunakan pada tabel `transactions`.
+- [ ] Jika belum digunakan di `transactions`, penghapusan mata uang berhasil sekaligus menghapus record terkait di tabel `currency_rates` (`where from_currency == code`).
+- [ ] Script `init_db.py` berhasil dieksekusi ulang tanpa error.
 
-### B. State Management (`AuthBloc`)
-* **Events:**
-  - `AuthCheckRequested`: Dipanggil saat aplikasi pertama kali dibuka (cek token tersimpan).
-  - `AuthRegisterSubmitted(fullName, email, password, currency)`
-  - `AuthLoginSubmitted(email, password)`
-  - `AuthLogoutRequested`
-* **States:**
-  - `AuthInitial`: Kondisi awal saat startup.
-  - `AuthLoading`: Saat proses HTTP request berlangsung (tampilkan spinner).
-  - `Authenticated(User user)`: Login/Register berhasil, navigasi ke Dashboard.
-  - `Unauthenticated`: Belum login atau sesi habis, arahkan ke LoginScreen.
-  - `AuthFailure(String errorMessage)`: Tampilkan snackbar / banner error.
-
-### C. Network Interceptor (`Dio`)
-* Menambahkan `Authorization: Bearer <token>` di setiap request yang memerlukan autentikasi.
-* **QueuedInterceptor:** Menangkap error HTTP `401 Unauthorized`. Jika terjadi, panggil endpoint `/refresh` secara otomatis dan ulangi request yang gagal tanpa membuat pengguna terlempar keluar.
-
----
-
-## 8. Kriteria Penerimaan (Acceptance Criteria / Definition of Done)
-
-- [ ] **Registrasi Akun Baru:**
-  - [ ] Validasi gagal jika format email salah atau password kurang dari 8 karakter.
-  - [ ] Registrasi gagal dengan status `409` jika email sudah digunakan.
-  - [ ] Registrasi sukses menghasilkan record baru di tabel `users` dengan password yang ter-hash aman.
-  - [ ] Registrasi sukses otomatis membuat dompet default dan kategori bawaan.
-- [ ] **Login:**
-  - [ ] Login gagal jika email tidak ditemukan atau password tidak cocok (status `401`).
-  - [ ] Login sukses mengembalikan Access Token dan Refresh Token yang valid.
-  - [ ] Rate limiting aktif jika salah password lebih dari 5 kali berturut-turut.
-- [ ] **Flutter UI & Session:**
-  - [ ] Form responsif dan bebas dari render overflow di semua ukuran layar (Mobile, Tablet, Web).
-  - [ ] Token tersimpan di `flutter_secure_storage`.
-  - [ ] Ketika aplikasi ditutup dan dibuka kembali, sesi pengguna tetap aktif (Auto-login via `AuthCheckRequested`).
-  - [ ] Tombol Logout menghapus token lokal dan mengembalikan user ke halaman login.
-- [ ] **Testing:**
-  - [ ] Unit test backend untuk hashing & JWT generator lulus 100%.
-  - [ ] Integration test untuk endpoint Register & Login lulus.
-  - [ ] Widget test untuk form login & register di Flutter lulus.
+### Frontend:
+- [ ] Halaman `CurrencyManagementScreen` hanya dapat diakses oleh user dengan hak `is_superuser`.
+- [ ] Menampilkan list mata uang lengkap dengan waktu pembuatan (UTC) dan simbol.
+- [ ] Form pop-up tambah mata uang dapat mengirim request dan memvalidasi input.
+- [ ] Dialog konfirmasi muncul sebelum penghapusan.
+- [ ] Error HTTP 400 (currency terpakai transaksi) ditampilkan secara ramah kepada user via SnackBar.
+- [ ] Halaman otomatis ter-refresh setelah penambahan atau penghapusan data.
+- [ ] Static analysis lulus (`flutter analyze` tanpa warning/error).
