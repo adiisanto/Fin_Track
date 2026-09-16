@@ -97,7 +97,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               child: ListView(
                 children: [
                   DropdownButtonFormField<String>(
-                    value: _selectedCurrency,
+                    initialValue: _selectedCurrency,
                     decoration: const InputDecoration(labelText: 'Mata Uang'),
                     items: _currencies.map((Currency c) {
                       return DropdownMenuItem<String>(

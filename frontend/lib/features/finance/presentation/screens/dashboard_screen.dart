@@ -8,6 +8,7 @@ import '../bloc/transaction_bloc.dart';
 import '../../data/finance_repository.dart';
 import 'add_expense_screen.dart';
 import 'currency_management_screen.dart';
+import 'payment_method_management_screen.dart';
 import '../bloc/currency_bloc.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -66,35 +67,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
           )
         ],
       ),
-      drawer: (authState is Authenticated && authState.user.isSuperuser)
-          ? Drawer(
-              child: ListView(
-                children: [
-                  const DrawerHeader(
-                    decoration: BoxDecoration(color: Colors.blue),
-                    child: Text('Admin Menu', style: TextStyle(color: Colors.white, fontSize: 24)),
+      drawer: Drawer(
+        child: ListView(
+          children: [
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Colors.blue),
+              child: Text('Menu Utama', style: TextStyle(color: Colors.white, fontSize: 24)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.payment),
+              title: const Text('Metode Pembayaran Saya'),
+              onTap: () {
+                Navigator.pop(context); // close drawer
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const PaymentMethodManagementScreen(),
                   ),
-                  ListTile(
-                    leading: const Icon(Icons.money),
-                    title: const Text('Manajemen Mata Uang'),
-                    onTap: () {
-                      Navigator.pop(context); // close drawer
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => BlocProvider(
-                            create: (ctx) => CurrencyBloc(
-                              financeRepository: context.read<FinanceRepository>(),
-                            ),
-                            child: const CurrencyManagementScreen(),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                );
+              },
+            ),
+            if (authState is Authenticated && authState.user.isSuperuser) ...[
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.only(left: 16.0, top: 8.0, bottom: 8.0),
+                child: Text('Admin', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
               ),
-            )
-          : null,
+              ListTile(
+                leading: const Icon(Icons.money),
+                title: const Text('Manajemen Mata Uang'),
+                onTap: () {
+                  Navigator.pop(context); // close drawer
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => BlocProvider(
+                        create: (ctx) => CurrencyBloc(
+                          financeRepository: context.read<FinanceRepository>(),
+                        ),
+                        child: const CurrencyManagementScreen(),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ]
+          ],
+        ),
+      ),
       body: Column(
         children: [
           _buildTimeframeSelector(),

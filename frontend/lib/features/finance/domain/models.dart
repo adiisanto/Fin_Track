@@ -24,28 +24,69 @@ class Currency {
   }
 }
 
+class MSTAccount {
+  final String account;
+  final String description;
+  final String type;
+  final bool active;
+
+  MSTAccount({
+    required this.account,
+    required this.description,
+    required this.type,
+    required this.active,
+  });
+
+  factory MSTAccount.fromJson(Map<String, dynamic> json) {
+    return MSTAccount(
+      account: json['account'],
+      description: json['description'],
+      type: json['type'],
+      active: json['active'],
+    );
+  }
+}
+
 class PaymentMethod {
   final String id;
+  final String? userId;
   final String code;
   final String name;
-  final String fromAccount;
+  final String? fromAccount;
   final String? accountDescription;
+  final bool isActive;
+  final bool isTemplate;
+  final bool isPublic;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   PaymentMethod({
     required this.id,
+    this.userId,
     required this.code,
     required this.name,
-    required this.fromAccount,
+    this.fromAccount,
     this.accountDescription,
+    this.isActive = true,
+    this.isTemplate = false,
+    this.isPublic = false,
+    this.createdAt,
+    this.updatedAt,
   });
 
   factory PaymentMethod.fromJson(Map<String, dynamic> json) {
     return PaymentMethod(
       id: json['id'],
+      userId: json['user_id'],
       code: json['code'],
       name: json['name'],
       fromAccount: json['from_account'],
       accountDescription: json['account_description'],
+      isActive: json['is_active'] ?? true,
+      isTemplate: json['is_template'] ?? false,
+      isPublic: json['is_public'] ?? false,
+      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
+      updatedAt: json['updated_at'] != null ? DateTime.parse(json['updated_at']) : null,
     );
   }
 }
