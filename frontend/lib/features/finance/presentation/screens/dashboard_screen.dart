@@ -7,6 +7,8 @@ import '../bloc/dashboard_state.dart';
 import '../bloc/transaction_bloc.dart';
 import '../../data/finance_repository.dart';
 import 'add_expense_screen.dart';
+import 'currency_management_screen.dart';
+import '../bloc/currency_bloc.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -64,6 +66,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
           )
         ],
       ),
+      drawer: (authState is Authenticated && authState.user.isSuperuser)
+          ? Drawer(
+              child: ListView(
+                children: [
+                  const DrawerHeader(
+                    decoration: BoxDecoration(color: Colors.blue),
+                    child: Text('Admin Menu', style: TextStyle(color: Colors.white, fontSize: 24)),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.money),
+                    title: const Text('Manajemen Mata Uang'),
+                    onTap: () {
+                      Navigator.pop(context); // close drawer
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => BlocProvider(
+                            create: (ctx) => CurrencyBloc(
+                              financeRepository: context.read<FinanceRepository>(),
+                            ),
+                            child: const CurrencyManagementScreen(),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            )
+          : null,
       body: Column(
         children: [
           _buildTimeframeSelector(),

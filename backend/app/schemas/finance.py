@@ -5,10 +5,18 @@ from uuid import UUID
 from decimal import Decimal
 
 # Currency Schemas
+class CurrencyCreate(BaseModel):
+    code: str = Field(..., min_length=3, max_length=3)
+    name: str = Field(..., min_length=2, max_length=50)
+    symbol: str = Field(..., min_length=1, max_length=5)
+    is_active: bool = True
+
 class CurrencyResponse(BaseModel):
     code: str
     name: str
     symbol: str
+    is_active: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True

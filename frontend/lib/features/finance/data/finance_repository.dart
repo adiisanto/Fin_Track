@@ -18,14 +18,41 @@ class FinanceRepository {
     }
   }
 
-  Future<List<Currency>> getCurrencies() async {
+  Future<List<Currency>> getCurrencies({bool includeInactive = false}) async {
     try {
-      final response = await dio.get('/api/v1/currencies');
+      final response = await dio.get('/api/v1/currencies', queryParameters: {'include_inactive': includeInactive});
       return (response.data['data'] as List)
           .map((json) => Currency.fromJson(json))
           .toList();
     } on DioException catch (e) {
       throw Exception(e.response?.data['detail'] ?? 'Failed to load currencies');
+    }
+  }
+
+  Future<Currency> addCurrency({
+    required String code,
+    required String name,
+    required String symbol,
+    bool isActive = true,
+  }) async {
+    try {
+      final response = await dio.post('/api/v1/admin/currencies', data: {
+        'code': code,
+        'name': name,
+        'symbol': symbol,
+        'is_active': isActive,
+      });
+      return Currency.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to add currency');
+    }
+  }
+
+  Future<void> deleteCurrency(String code) async {
+    try {
+      await dio.delete('/api/v1/admin/currencies/$code');
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to delete currency');
     }
   }
 

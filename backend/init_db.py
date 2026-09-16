@@ -22,6 +22,17 @@ async def seed_data():
 
         print("Inserting seed data...")
         
+        # 0. Seed Superadmin User
+        from app.core.security import get_password_hash
+        admin_user = User(
+            email="admin@fintrack.com",
+            password_hash=get_password_hash("admin123"),
+            full_name="Super Admin",
+            base_currency="IDR",
+            is_superuser=True
+        )
+        session.add(admin_user)
+        
         # 1. Seed Currencies
         currencies = [
             Currency(code="IDR", name="Indonesian Rupiah", symbol="Rp"),

@@ -26,13 +26,13 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 | 1 | **User Authentication & Session** | Auth | 🟢 Selesai | ⚠️ Manual Verified | Register, Login, JWT access/refresh token, Profile |
 | 2 | **Dashboard Summary** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Rekap pemasukan, pengeluaran, net profit/loss, filter timeframe |
 | 3 | **Expense Tracking (Catat Pengeluaran)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Form catat biaya, konversi kurs otomatis, binding GL account |
-| 4 | **Multi-Currency & Exchange Rates** | Master/Finance | 🟡 Parsial | ⚠️ Manual Verified | Master mata uang & kurs terbaru sudah jalan; UI kelola kurs belum ada |
+| 4 | **Multi-Currency Management & Rates** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen mata uang oleh superadmin & konversi kurs otomatis |
 | 5 | **Payment Methods & GL Mapping** | Master/Finance | 🟡 Parsial | ⚠️ Manual Verified | Relasi ke `mst_account` aktif; form CRUD payment method belum ada |
 | 6 | **Income Tracking (Catat Pemasukan)** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Backend sudah siap menerima type `INCOME`, form UI di Flutter belum dibuat |
 | 7 | **Transaction History & Filter** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Halaman riwayat daftar transaksi dengan pagination & search |
 | 8 | **General Ledger (COA Management)** | Finance | 🟡 Parsial | ⏳ Belum Dites | Skema tabel `mst_account` & seed data sudah siap; CRUD UI belum ada |
 | 9 | **Budgeting / Target Anggaran** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Batasan pengeluaran per kategori / akun GL dalam periode tertentu |
-| 10 | **Export & Financial Reports** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Unduh laporan laba/rugi, arus kas, ekspor CSV/PDF |
+| 10| **Export & Financial Reports** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Unduh laporan laba/rugi, arus kas, ekspor CSV/PDF |
 
 ---
 
@@ -62,11 +62,11 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 - **Status Pengerjaan**: 🟢 Selesai
 - **Status Test**: ⚠️ Manual Verified
 
-### 4. Multi-Currency & Kurs
-- **Deskripsi**: Dukungan multi-mata uang untuk transaksi non-base currency dengan konversi otomatis ke base currency pengguna berdasarkan tabel `currency_rates`.
-- **Backend**: Endpoint `/api/v1/currencies`, `/api/v1/currency-rates/latest`.
-- **Frontend**: Dropdown pemilihan mata uang & kalkulator konversi pada form transaksi.
-- **Status Pengerjaan**: 🟡 Parsial (Konsumsi data transaksi sudah berjalan; UI administrasi penambahan kurs/mata uang baru belum ada).
+### 4. Multi-Currency Management & Rates
+- **Deskripsi**: Dukungan multi-mata uang untuk transaksi non-base currency dengan konversi otomatis. Termasuk halaman khusus *Superadmin* untuk menambah dan menghapus mata uang.
+- **Backend**: Endpoint `/api/v1/currencies`, `/api/v1/currency-rates/latest`, `/api/v1/admin/currencies`.
+- **Frontend**: Dropdown mata uang di form transaksi, layar `CurrencyManagementScreen`, dan `CurrencyBloc`.
+- **Status Pengerjaan**: 🟢 Selesai (Termasuk pembatasan akses khusus Superadmin).
 - **Status Test**: ⚠️ Manual Verified
 
 ### 5. Payment Methods & Master GL (`MST_Account`)

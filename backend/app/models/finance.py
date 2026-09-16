@@ -28,6 +28,7 @@ class Currency(Base):
     name = Column(String(50), nullable=False)
     symbol = Column(String(5), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class CurrencyRate(Base):

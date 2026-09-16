@@ -51,9 +51,11 @@ Dokumen ini berisi daftar seluruh *routing* yang digunakan pada proyek **Fin_Tra
 #### 3. Master Data (Currencies, Rates, Payment Methods)
 | Method | Endpoint | Access | Deskripsi |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/v1/currencies` | Public | Mengambil daftar mata uang aktif yang didukung sistem |
+| `GET` | `/api/v1/currencies` | Public | Mengambil daftar mata uang yang didukung sistem (opsional: `include_inactive`) |
 | `GET` | `/api/v1/currency-rates/latest` | Public | Mengambil kurs/nilai tukar terbaru antara dua mata uang |
 | `GET` | `/api/v1/payment-methods` | Public | Mengambil daftar metode pembayaran aktif yang terikat ke akun GL |
+| `POST` | `/api/v1/admin/currencies` | Protected (Superadmin) | Menambah data mata uang baru |
+| `DELETE`| `/api/v1/admin/currencies/{code}` | Protected (Superadmin) | Menghapus mata uang (jika belum dipakai transaksi) |
 
 > ℹ️ **Catatan Lintas Feature (Master Data)**:
 > - `GET /api/v1/currencies`: Dikelompokkan di **Finance**, tetapi juga digunakan pada form registrasi di fitur **Auth** untuk memilih `base_currency` awal pengguna.
@@ -81,6 +83,7 @@ Navigasi Frontend menggunakan kombinasi **State-Driven Routing** (`AppNavigator`
 | :--- | :--- | :--- | :--- |
 | **Dashboard Screen** | `lib/features/finance/presentation/screens/dashboard_screen.dart` | Ditampilkan otomatis oleh `AppNavigator` saat `state is Authenticated` | Halaman utama yang menampilkan ringkasan keuangan, filter timeframe, dan tombol catat transaksi |
 | **Add Expense Screen** | `lib/features/finance/presentation/screens/add_expense_screen.dart` | `Navigator.push(MaterialPageRoute(...))` dari FloatingActionButton Dashboard | Form input transaksi pengeluaran. Menghasilkan *pop(true)* saat berhasil disimpan untuk memicu *refresh* otomatis di Dashboard |
+| **Currency Management Screen** | `lib/features/finance/presentation/screens/currency_management_screen.dart` | `Navigator.push(MaterialPageRoute(...))` dari Drawer khusus Superadmin di Dashboard | Halaman khusus superadmin untuk menambah dan menghapus mata uang |
 
 > ℹ️ **Catatan Lintas Feature (Navigasi)**:
 > - **Logout**: Tombol logout di `DashboardScreen` mendispatch `AuthLogoutRequested` ke `AuthBloc` (fitur **Auth**), yang secara reaktif mengubah tampilan kembali ke `LoginScreen`.

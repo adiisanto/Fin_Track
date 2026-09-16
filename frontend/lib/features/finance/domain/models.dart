@@ -2,14 +2,24 @@ class Currency {
   final String code;
   final String name;
   final String symbol;
+  final bool isActive;
+  final DateTime? createdAt;
 
-  Currency({required this.code, required this.name, required this.symbol});
+  Currency({
+    required this.code,
+    required this.name,
+    required this.symbol,
+    this.isActive = true,
+    this.createdAt,
+  });
 
   factory Currency.fromJson(Map<String, dynamic> json) {
     return Currency(
       code: json['code'],
       name: json['name'],
       symbol: json['symbol'],
+      isActive: json['is_active'] ?? true,
+      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
     );
   }
 }

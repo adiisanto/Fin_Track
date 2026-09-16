@@ -93,6 +93,7 @@ Menyimpan data pengguna yang terdaftar di aplikasi.
 | `hashed_password` | VARCHAR | Not Null | Password terenkripsi (Argon2) |
 | `base_currency` | VARCHAR | Not Null, Default: IDR | Mata uang utama pengguna |
 | `is_active` | BOOLEAN | Default: True | Status akun |
+| `is_superuser` | BOOLEAN | Default: False | Akses superadmin |
 | `created_at` | TIMESTAMP | Default: now() | Waktu pembuatan akun |
 | `updated_at` | TIMESTAMP | Default: now() | Waktu pembaruan akun |
 
@@ -119,6 +120,7 @@ Menyimpan daftar mata uang yang didukung aplikasi.
 | `name` | VARCHAR(50) | Not Null | Nama mata uang |
 | `symbol` | VARCHAR(5) | Not Null | Simbol mata uang (Rp, $) |
 | `is_active` | BOOLEAN | Default: True | Status mata uang aktif/tidak |
+| `created_at` | TIMESTAMP | Default: now() | Waktu rekam |
 
 ### 4. `currency_rates`
 Menyimpan historis nilai tukar / kurs antar mata uang.

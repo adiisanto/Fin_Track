@@ -18,6 +18,7 @@ class UserResponse(BaseModel):
     full_name: str
     email: EmailStr
     base_currency: str
+    is_superuser: bool = False
     created_at: datetime
     
     class Config:

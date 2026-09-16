@@ -5,10 +5,11 @@ from typing import List, Any
 from datetime import datetime, timezone, timedelta
 import calendar
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_current_superadmin, get_db
 from app.models.user import User
 from app.models.finance import MST_Account, Currency, CurrencyRate, PaymentMethod, Transaction
 from app.schemas.finance import (
+    CurrencyCreate,
     CurrencyResponse,
     PaymentMethodResponse,
     CurrencyRateResponse,
@@ -67,12 +68,84 @@ async def get_dashboard_summary(
     }
 
 @router.get("/currencies", response_model=dict)
-async def get_currencies(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Currency).where(Currency.is_active == True))
+async def get_currencies(
+    include_inactive: bool = False,
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Currency)
+    if not include_inactive:
+        query = query.where(Currency.is_active == True)
+        
+    result = await db.execute(query)
     currencies = result.scalars().all()
     return {
         "success": True,
         "data": [CurrencyResponse.model_validate(c).model_dump() for c in currencies]
+    }
+
+@router.post("/admin/currencies", response_model=dict, status_code=201)
+async def create_currency(
+    currency_in: CurrencyCreate,
+    current_admin: User = Depends(get_current_superadmin),
+    db: AsyncSession = Depends(get_db)
+):
+    code_upper = currency_in.code.upper()
+    
+    # Cek duplikat
+    result = await db.execute(select(Currency).where(Currency.code == code_upper))
+    if result.scalars().first():
+        raise HTTPException(status_code=409, detail=f"Kode mata uang {code_upper} sudah terdaftar.")
+        
+    new_currency = Currency(
+        code=code_upper,
+        name=currency_in.name,
+        symbol=currency_in.symbol,
+        is_active=currency_in.is_active,
+        created_at=datetime.now(timezone.utc)
+    )
+    
+    db.add(new_currency)
+    await db.commit()
+    await db.refresh(new_currency)
+    
+    return {
+        "success": True,
+        "message": f"Mata uang {code_upper} berhasil ditambahkan.",
+        "data": CurrencyResponse.model_validate(new_currency).model_dump()
+    }
+
+@router.delete("/admin/currencies/{code}", response_model=dict)
+async def delete_currency(
+    code: str,
+    current_admin: User = Depends(get_current_superadmin),
+    db: AsyncSession = Depends(get_db)
+):
+    code_upper = code.upper()
+    
+    result = await db.execute(select(Currency).where(Currency.code == code_upper))
+    currency = result.scalars().first()
+    if not currency:
+        raise HTTPException(status_code=404, detail="Mata uang tidak ditemukan.")
+        
+    # Validasi keterikatan transaksi
+    trx_result = await db.execute(select(Transaction).where(Transaction.currency_code == code_upper).limit(1))
+    if trx_result.scalars().first():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mata uang {code_upper} tidak dapat dihapus karena sudah digunakan pada data transaksi."
+        )
+        
+    # Pembersihan Data Kurs (currency_rates)
+    from sqlalchemy import delete
+    await db.execute(delete(CurrencyRate).where(CurrencyRate.from_currency == code_upper))
+    
+    # Hapus currency
+    await db.delete(currency)
+    await db.commit()
+    
+    return {
+        "success": True,
+        "message": f"Mata uang {code_upper} beserta data kurs terkait berhasil dihapus."
     }
 
 @router.get("/payment-methods", response_model=dict)
