@@ -13,6 +13,30 @@ from app.schemas.user import UserCreate, UserLogin, UserResponse, AuthResponse, 
 
 router = APIRouter()
 
+from app.models.finance import MST_Account
+
+async def seed_default_user_coa(db: AsyncSession, user_id):
+    # Fetch system template accounts (created_by == None)
+    result = await db.execute(select(MST_Account).where(MST_Account.created_by == None).order_by(MST_Account.account))
+    templates = result.scalars().all()
+    
+    new_accounts = []
+    for t in templates:
+        new_accounts.append(MST_Account(
+            account=t.account,
+            description=t.description,
+            type=t.type,
+            dimensi1=t.dimensi1,
+            dimensi2=t.dimensi2,
+            dimensi3=t.dimensi3,
+            dimensi4=t.dimensi4,
+            active=t.active,
+            created_by=user_id
+        ))
+    if new_accounts:
+        db.add_all(new_accounts)
+        await db.commit()
+
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(deps.get_db)):
     # Check if email exists
@@ -39,6 +63,8 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(deps.get_db))
         await db.rollback()
         raise HTTPException(status_code=400, detail="Database integrity error.")
         
+    await seed_default_user_coa(db, db_user.id)
+    
     access_token = security.create_access_token(subject=db_user.id)
     refresh_token = security.create_refresh_token(subject=db_user.id)
     

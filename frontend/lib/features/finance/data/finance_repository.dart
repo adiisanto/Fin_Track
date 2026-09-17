@@ -192,4 +192,45 @@ class FinanceRepository {
       throw Exception(e.response?.data['detail'] ?? 'Failed to create transaction');
     }
   }
+
+  // COA Endpoints
+  Future<List<MSTAccount>> getCoaAccounts({bool includeInactive = false, String? search}) async {
+    try {
+      final response = await dio.get('/api/v1/coa', queryParameters: {
+        'include_inactive': includeInactive,
+        if (search != null && search.isNotEmpty) 'search': search,
+      });
+      return (response.data['data'] as List)
+          .map((json) => MSTAccount.fromJson(json))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to load COA accounts');
+    }
+  }
+
+  Future<MSTAccount> createCoaAccount(Map<String, dynamic> data) async {
+    try {
+      final response = await dio.post('/api/v1/coa', data: data);
+      return MSTAccount.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to create account');
+    }
+  }
+
+  Future<MSTAccount> updateCoaAccount(String id, Map<String, dynamic> data) async {
+    try {
+      final response = await dio.put('/api/v1/coa/$id', data: data);
+      return MSTAccount.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to update account');
+    }
+  }
+
+  Future<void> deleteCoaAccount(String id) async {
+    try {
+      await dio.delete('/api/v1/coa/$id');
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to delete account');
+    }
+  }
 }

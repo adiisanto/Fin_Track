@@ -30,7 +30,7 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 | 5 | **Payment Methods & GL Mapping** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen metode pembayaran user-scoped, copy template publik, relasi akun GL, & soft delete |
 | 6 | **Income Tracking (Catat Pemasukan)** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Backend sudah siap menerima type `INCOME`, form UI di Flutter belum dibuat |
 | 7 | **Transaction History & Filter** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Halaman riwayat daftar transaksi dengan pagination & search |
-| 8 | **General Ledger (COA Management)** | Finance | 🟡 Parsial | ⏳ Belum Dites | Skema tabel `mst_account` & seed data sudah siap; CRUD UI belum ada |
+| 8 | **General Ledger (COA Management)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen COA mandiri per user, hierarki dimensi, copy template default saat registrasi |
 | 9 | **Budgeting / Target Anggaran** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Batasan pengeluaran per kategori / akun GL dalam periode tertentu |
 | 10| **Export & Financial Reports** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Unduh laporan laba/rugi, arus kas, ekspor CSV/PDF |
 

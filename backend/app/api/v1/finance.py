@@ -159,7 +159,7 @@ async def get_payment_methods(
     db: AsyncSession = Depends(get_db)
 ):
     query = select(PaymentMethod, MST_Account).outerjoin(
-        MST_Account, PaymentMethod.from_account == MST_Account.account
+        MST_Account, and_(PaymentMethod.from_account == MST_Account.account, MST_Account.created_by == current_user.id)
     ).where(
         PaymentMethod.user_id == current_user.id,
         PaymentMethod.is_template == is_template
@@ -197,7 +197,7 @@ async def create_payment_method(
 
     # Check from_account validity
     if body.from_account:
-        acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account))
+        acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account, MST_Account.created_by == current_user.id))
         if not acc.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Akun GL tidak valid.")
 
@@ -218,7 +218,7 @@ async def create_payment_method(
 
     pm_resp = PaymentMethodResponse.model_validate(new_pm)
     if body.from_account:
-        acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account))
+        acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account, MST_Account.created_by == current_user.id))
         acc_obj = acc.scalar_one()
         pm_resp.account_description = acc_obj.description
 
@@ -260,7 +260,7 @@ async def update_payment_method(
         if body.from_account == "":
             pm.from_account = None
         else:
-            acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account))
+            acc = await db.execute(select(MST_Account).where(MST_Account.account == body.from_account, MST_Account.created_by == current_user.id))
             if not acc.scalar_one_or_none():
                 raise HTTPException(status_code=400, detail="Akun GL tidak valid.")
             pm.from_account = body.from_account
@@ -311,7 +311,7 @@ async def get_public_templates(
     db: AsyncSession = Depends(get_db)
 ):
     query = select(PaymentMethod, MST_Account).outerjoin(
-        MST_Account, PaymentMethod.from_account == MST_Account.account
+        MST_Account, and_(PaymentMethod.from_account == MST_Account.account, MST_Account.created_by == current_user.id)
     ).where(
         PaymentMethod.is_template == True,
         PaymentMethod.is_public == True
@@ -490,7 +490,7 @@ async def create_transaction(
         raise HTTPException(status_code=400, detail="Invalid currency_code")
 
     # 2. Validate Payment Method and get it for response
-    pm_query = select(PaymentMethod, MST_Account).join(MST_Account, PaymentMethod.from_account == MST_Account.account).where(PaymentMethod.id == trans_in.payment_method_id)
+    pm_query = select(PaymentMethod, MST_Account).join(MST_Account, and_(PaymentMethod.from_account == MST_Account.account, MST_Account.created_by == current_user.id)).where(PaymentMethod.id == trans_in.payment_method_id)
     pm_result = await db.execute(pm_query)
     pm_row = pm_result.first()
     if not pm_row:
@@ -550,3 +550,173 @@ async def create_transaction(
             "transaction_date": transaction.transaction_date.isoformat()
         }
     }
+
+
+from app.schemas.finance import AccountCreate, AccountUpdate, AccountResponse, AccountTypeEnum
+
+@router.get("/coa", response_model=dict)
+async def get_coa(
+    include_inactive: bool = Query(False),
+    search: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(MST_Account).where(MST_Account.created_by == current_user.id)
+    if not include_inactive:
+        query = query.where(MST_Account.active == True)
+    if type:
+        query = query.where(MST_Account.type == type)
+    if search:
+        query = query.where(or_(
+            MST_Account.account.ilike(f"%{search}%"),
+            MST_Account.description.ilike(f"%{search}%")
+        ))
+    
+    result = await db.execute(query.order_by(MST_Account.account))
+    accounts = result.scalars().all()
+    
+    # check transactions
+    pm_query = select(PaymentMethod.from_account).join(Transaction, PaymentMethod.id == Transaction.payment_method_id).where(PaymentMethod.user_id == current_user.id)
+    pm_res = await db.execute(pm_query)
+    used_accounts = set(pm_res.scalars().all())
+
+    data = []
+    for acc in accounts:
+        acc_dict = AccountResponse.model_validate(acc).model_dump()
+        acc_dict["has_transactions"] = acc.account in used_accounts
+        data.append(acc_dict)
+
+    return {"success": True, "data": data}
+
+@router.post("/coa", response_model=dict, status_code=201)
+async def create_coa(
+    body: AccountCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Check duplicate
+    existing = await db.execute(select(MST_Account).where(
+        MST_Account.created_by == current_user.id,
+        MST_Account.account == body.account
+    ))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Kode akun sudah terdaftar.")
+
+    new_acc = MST_Account(
+        account=body.account,
+        description=body.description,
+        type=body.type.value,
+        dimensi1=body.dimensi1,
+        dimensi2=body.dimensi2,
+        dimensi3=body.dimensi3,
+        dimensi4=body.dimensi4,
+        active=body.active,
+        created_by=current_user.id,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(new_acc)
+    await db.commit()
+    await db.refresh(new_acc)
+
+    return {"success": True, "data": AccountResponse.model_validate(new_acc).model_dump()}
+
+@router.put("/coa/{id}", response_model=dict)
+async def update_coa(
+    id: str,
+    body: AccountUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(MST_Account).where(
+        MST_Account.id == id,
+        MST_Account.created_by == current_user.id
+    ))
+    acc = result.scalar_one_or_none()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Akun tidak ditemukan.")
+
+    pm_query = select(PaymentMethod.from_account).join(Transaction, PaymentMethod.id == Transaction.payment_method_id).where(PaymentMethod.user_id == current_user.id, PaymentMethod.from_account == acc.account).limit(1)
+    has_transactions = (await db.execute(pm_query)).scalar_one_or_none() is not None
+
+    if has_transactions:
+        if (body.account is not None and body.account != acc.account) or (body.type is not None and body.type.value != acc.type):
+            raise HTTPException(status_code=400, detail="Kode akun dan tipe akun tidak dapat diubah karena akun ini sudah memiliki riwayat transaksi.")
+    elif body.account is not None and body.account != acc.account:
+        existing = await db.execute(select(MST_Account).where(
+            MST_Account.created_by == current_user.id,
+            MST_Account.account == body.account
+        ))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Kode akun sudah terdaftar.")
+
+    if body.account is not None:
+        acc.account = body.account
+    if body.description is not None:
+        acc.description = body.description
+    if body.type is not None:
+        acc.type = body.type.value
+    if body.dimensi1 is not None:
+        acc.dimensi1 = body.dimensi1 if body.dimensi1 != "" else None
+    if body.dimensi2 is not None:
+        acc.dimensi2 = body.dimensi2 if body.dimensi2 != "" else None
+    if body.dimensi3 is not None:
+        acc.dimensi3 = body.dimensi3 if body.dimensi3 != "" else None
+    if body.dimensi4 is not None:
+        acc.dimensi4 = body.dimensi4 if body.dimensi4 != "" else None
+    if body.active is not None:
+        acc.active = body.active
+
+    await db.commit()
+    await db.refresh(acc)
+    
+    acc_dict = AccountResponse.model_validate(acc).model_dump()
+    acc_dict["has_transactions"] = has_transactions
+    return {"success": True, "data": acc_dict}
+
+@router.delete("/coa/{id}", response_model=dict)
+async def delete_coa(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(MST_Account).where(
+        MST_Account.id == id,
+        MST_Account.created_by == current_user.id
+    ))
+    acc = result.scalar_one_or_none()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Akun tidak ditemukan.")
+
+    pm_query = select(PaymentMethod.from_account).join(Transaction, PaymentMethod.id == Transaction.payment_method_id).where(PaymentMethod.user_id == current_user.id, PaymentMethod.from_account == acc.account).limit(1)
+    if (await db.execute(pm_query)).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail="Akun tidak dapat dinonaktifkan atau dihapus karena sudah terdapat transaksi yang menggunakan akun ini. Hapus data transaksi terkait terlebih dahulu.")
+
+    acc.active = False
+    await db.commit()
+    return {"success": True, "message": "Akun berhasil dinonaktifkan (soft deleted)."}
+
+@router.get("/coa/lookup", response_model=dict)
+async def lookup_coa(
+    q: Optional[str] = None,
+    exclude_account: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(MST_Account).where(
+        MST_Account.created_by == current_user.id,
+        MST_Account.active == True
+    )
+    if exclude_account:
+        query = query.where(MST_Account.account != exclude_account)
+    
+    if q:
+        query = query.where(or_(
+            MST_Account.account.ilike(f"%{q}%"),
+            MST_Account.description.ilike(f"%{q}%")
+        ))
+    
+    result = await db.execute(query.order_by(MST_Account.account))
+    data = [AccountLookupResponse.model_validate(acc).model_dump() for acc in result.scalars().all()]
+
+    return {"success": True, "data": data}

@@ -51,12 +51,21 @@ async def seed_data():
         ]
         session.add_all(rates)
 
-        # 3. Seed MST_Account
+        # 3. Seed MST_Account (Default COA Templates for all users)
         accounts = [
-            MST_Account(account="1001", description="Kas Utama", type="Debit"),
-            MST_Account(account="1002", description="Bank Operasional", type="Debit"),
-            MST_Account(account="1003", description="Saldo E-Wallet", type="Debit"),
-            MST_Account(account="2001", description="Hutang Kartu Kredit", type="Credit"),
+            MST_Account(account="1000", description="ASET LANCAR", type="Debit"),
+            MST_Account(account="1100", description="Kas & Bank", type="Debit", dimensi1="1000"),
+            MST_Account(account="1001", description="Kas Utama", type="Debit", dimensi1="1000", dimensi2="1100"),
+            MST_Account(account="1002", description="Bank Operasional", type="Debit", dimensi1="1000", dimensi2="1100"),
+            MST_Account(account="1003", description="Saldo E-Wallet", type="Debit", dimensi1="1000", dimensi2="1100"),
+            MST_Account(account="2000", description="KEWAJIBAN", type="Credit"),
+            MST_Account(account="2100", description="Hutang Jangka Pendek", type="Credit", dimensi1="2000"),
+            MST_Account(account="2001", description="Hutang Kartu Kredit", type="Credit", dimensi1="2000", dimensi2="2100"),
+            MST_Account(account="3000", description="EKUITAS / MODAL", type="Credit"),
+            MST_Account(account="4000", description="PENDAPATAN", type="Credit"),
+            MST_Account(account="4101", description="Pendapatan Gaji", type="Credit", dimensi1="4000"),
+            MST_Account(account="5000", description="BEBAN OPERASIONAL", type="Debit"),
+            MST_Account(account="5101", description="Beban Makan & Minum", type="Debit", dimensi1="5000"),
         ]
         session.add_all(accounts)
         

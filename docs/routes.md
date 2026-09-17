@@ -57,6 +57,15 @@ Dokumen ini berisi daftar seluruh *routing* yang digunakan pada proyek **Fin_Tra
 | `POST` | `/api/v1/admin/currencies` | Protected (Superadmin) | Menambah data mata uang baru |
 | `DELETE`| `/api/v1/admin/currencies/{code}` | Protected (Superadmin) | Menghapus mata uang (jika belum dipakai transaksi) |
 
+#### 4. COA Management (Chart of Accounts)
+| Method | Endpoint | Access | Deskripsi |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/coa` | Protected | Mendapatkan seluruh daftar COA milik pengguna (Filter: search, type, include_inactive) |
+| `POST` | `/api/v1/coa` | Protected | Membuat data akun baru |
+| `PUT` | `/api/v1/coa/{id}` | Protected | Memperbarui data akun (kode & tipe ditolak jika ada transaksi) |
+| `DELETE` | `/api/v1/coa/{id}` | Protected | Soft delete akun (ditolak jika ada transaksi) |
+| `GET` | `/api/v1/coa/lookup` | Protected | Endpoint ringan untuk popup modal lookup pencarian akun |
+
 > ℹ️ **Catatan Lintas Feature (Master Data)**:
 > - `GET /api/v1/currencies`: Dikelompokkan di **Finance**, tetapi juga digunakan pada form registrasi di fitur **Auth** untuk memilih `base_currency` awal pengguna.
 > - `GET /api/v1/currency-rates/latest` & `GET /api/v1/payment-methods`: Digunakan oleh form transaksi (**Add Expense**) untuk kalkulasi realtime nilai tukar dan pemilihan rekening/metode pembayaran.

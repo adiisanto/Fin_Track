@@ -21,6 +21,49 @@ class CurrencyResponse(BaseModel):
     class Config:
         from_attributes = True
 
+from enum import Enum
+
+class AccountTypeEnum(str, Enum):
+    DEBIT = "Debit"
+    CREDIT = "Credit"
+
+class AccountCreate(BaseModel):
+    account: str = Field(..., min_length=1, max_length=20, description="Kode Akun")
+    description: str = Field(..., min_length=1, max_length=255, description="Deskripsi Akun")
+    type: AccountTypeEnum
+    dimensi1: Optional[str] = Field(None, max_length=20)
+    dimensi2: Optional[str] = Field(None, max_length=20)
+    dimensi3: Optional[str] = Field(None, max_length=20)
+    dimensi4: Optional[str] = Field(None, max_length=20)
+    active: bool = True
+
+class AccountUpdate(BaseModel):
+    account: Optional[str] = Field(None, min_length=1, max_length=20)
+    description: Optional[str] = Field(None, min_length=1, max_length=255)
+    type: Optional[AccountTypeEnum] = None
+    dimensi1: Optional[str] = Field(None, max_length=20)
+    dimensi2: Optional[str] = Field(None, max_length=20)
+    dimensi3: Optional[str] = Field(None, max_length=20)
+    dimensi4: Optional[str] = Field(None, max_length=20)
+    active: Optional[bool] = None
+
+class AccountResponse(BaseModel):
+    id: UUID
+    account: str
+    description: str
+    type: str
+    dimensi1: Optional[str] = None
+    dimensi2: Optional[str] = None
+    dimensi3: Optional[str] = None
+    dimensi4: Optional[str] = None
+    active: bool
+    created_at: datetime
+    created_by: Optional[UUID] = None
+    has_transactions: bool = False
+
+    class Config:
+        from_attributes = True
+
 # Account Lookup Schema
 class AccountLookupResponse(BaseModel):
     account: str
@@ -35,7 +78,7 @@ class AccountLookupResponse(BaseModel):
 class PaymentMethodCreate(BaseModel):
     code: str = Field(..., min_length=2, max_length=30)
     name: str = Field(..., min_length=2, max_length=100)
-    from_account: Optional[str] = Field(None, max_length=10)
+    from_account: Optional[str] = Field(None, max_length=20)
     is_active: bool = True
     is_template: bool = False
     is_public: bool = False
@@ -43,7 +86,7 @@ class PaymentMethodCreate(BaseModel):
 class PaymentMethodUpdate(BaseModel):
     code: Optional[str] = Field(None, min_length=2, max_length=30)
     name: Optional[str] = Field(None, min_length=2, max_length=100)
-    from_account: Optional[str] = Field(None, max_length=10)
+    from_account: Optional[str] = Field(None, max_length=20)
     is_active: Optional[bool] = None
     is_template: Optional[bool] = None
     is_public: Optional[bool] = None

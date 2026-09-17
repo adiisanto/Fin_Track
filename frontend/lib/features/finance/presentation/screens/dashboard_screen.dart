@@ -9,6 +9,7 @@ import '../../data/finance_repository.dart';
 import 'add_expense_screen.dart';
 import 'currency_management_screen.dart';
 import 'payment_method_management_screen.dart';
+import 'coa_management_screen.dart';
 import '../bloc/currency_bloc.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -82,6 +83,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => const PaymentMethodManagementScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.account_balance),
+              title: const Text('Manajemen COA'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const CoaManagementScreen(),
                   ),
                 );
               },

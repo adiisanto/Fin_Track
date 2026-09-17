@@ -25,24 +25,48 @@ class Currency {
 }
 
 class MSTAccount {
+  final String? id;
   final String account;
   final String description;
   final String type;
+  final String? dimensi1;
+  final String? dimensi2;
+  final String? dimensi3;
+  final String? dimensi4;
   final bool active;
+  final DateTime? createdAt;
+  final String? createdBy;
+  final bool hasTransactions;
 
   MSTAccount({
+    this.id,
     required this.account,
     required this.description,
     required this.type,
+    this.dimensi1,
+    this.dimensi2,
+    this.dimensi3,
+    this.dimensi4,
     required this.active,
+    this.createdAt,
+    this.createdBy,
+    this.hasTransactions = false,
   });
 
   factory MSTAccount.fromJson(Map<String, dynamic> json) {
     return MSTAccount(
+      id: json['id'],
       account: json['account'],
       description: json['description'],
       type: json['type'],
-      active: json['active'],
+      dimensi1: json['dimensi1'],
+      dimensi2: json['dimensi2'],
+      dimensi3: json['dimensi3'],
+      dimensi4: json['dimensi4'],
+      active: json['active'] ?? true,
+      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
+      createdBy: json['created_by'],
+      hasTransactions: json['has_transactions'] ?? false,
     );
   }
 }
