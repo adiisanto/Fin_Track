@@ -171,22 +171,28 @@ class FinanceRepository {
   }
 
   Future<void> createTransaction({
-    required String type,
+    String? type,
     required String currencyCode,
     required double amount,
     required String paymentMethodId,
     String? notes,
+    DateTime? transactionDate,
   }) async {
     try {
+      final data = {
+        'type': type,
+        'currency_code': currencyCode,
+        'amount': amount,
+        'payment_method_id': paymentMethodId,
+        'notes': notes,
+      };
+      if (transactionDate != null) {
+        data['transaction_date'] = transactionDate.toUtc().toIso8601String();
+      }
+      
       await dio.post(
         '/api/v1/transactions',
-        data: {
-          'type': type,
-          'currency_code': currencyCode,
-          'amount': amount,
-          'payment_method_id': paymentMethodId,
-          'notes': notes,
-        },
+        data: data,
       );
     } on DioException catch (e) {
       throw Exception(e.response?.data['detail'] ?? 'Failed to create transaction');

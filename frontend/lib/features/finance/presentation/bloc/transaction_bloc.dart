@@ -42,6 +42,7 @@ class TransactionBloc extends Bloc<TransactionEvent, TransactionState> {
         amount: event.amount,
         paymentMethodId: event.paymentMethodId,
         notes: event.notes,
+        transactionDate: event.transactionDate,
       );
       emit(TransactionSubmitSuccess());
     } catch (e) {

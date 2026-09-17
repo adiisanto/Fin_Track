@@ -6,11 +6,11 @@ import '../bloc/dashboard_event.dart';
 import '../bloc/dashboard_state.dart';
 import '../bloc/transaction_bloc.dart';
 import '../../data/finance_repository.dart';
-import 'add_expense_screen.dart';
 import 'currency_management_screen.dart';
 import 'payment_method_management_screen.dart';
 import 'coa_management_screen.dart';
 import '../bloc/currency_bloc.dart';
+import '../widgets/quick_transaction_dialog.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -147,15 +147,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          // Navigate to add expense screen and wait for result
-          final shouldRefresh = await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => BlocProvider(
-                create: (ctx) => TransactionBloc(
-                  financeRepository: context.read<FinanceRepository>(),
-                ),
-                child: const AddExpenseScreen(),
+          final shouldRefresh = await showDialog<bool>(
+            context: context,
+            barrierDismissible: true,
+            builder: (_) => BlocProvider(
+              create: (ctx) => TransactionBloc(
+                financeRepository: context.read<FinanceRepository>(),
               ),
+              child: const QuickTransactionDialog(),
             ),
           );
 
@@ -164,7 +163,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           }
         },
         icon: const Icon(Icons.add),
-        label: const Text('Catat Pengeluaran'),
+        label: const Text('Catat Transaksi'),
       ),
     );
   }

@@ -71,7 +71,7 @@ class Transaction(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    type = Column(String(10), nullable=False) # 'EXPENSE' or 'INCOME'
+    type = Column(String(50), nullable=True) # 'EXPENSE', 'INCOME', or other master type
     
     currency_code = Column(String(3), ForeignKey("currencies.code"), nullable=False)
     amount = Column(Numeric(15, 2), nullable=False)

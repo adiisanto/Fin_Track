@@ -484,6 +484,13 @@ async def create_transaction(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    # 0. Validate backdate
+    tx_date = trans_in.transaction_date or datetime.now(timezone.utc)
+    if tx_date.tzinfo is None:
+        tx_date = tx_date.replace(tzinfo=timezone.utc)
+    if tx_date > (datetime.now(timezone.utc) + timedelta(minutes=5)):
+        raise HTTPException(status_code=400, detail="Tanggal transaksi tidak boleh di masa depan (hanya backdate yang diizinkan)")
+
     # 1. Validate Currency
     curr_result = await db.execute(select(Currency).where(Currency.code == trans_in.currency_code))
     if not curr_result.scalar_one_or_none():
@@ -524,7 +531,7 @@ async def create_transaction(
         amount_in_base_currency=amount_in_base,
         payment_method_id=trans_in.payment_method_id,
         notes=trans_in.notes,
-        transaction_date=trans_in.transaction_date or datetime.now(timezone.utc)
+        transaction_date=tx_date
     )
     
     db.add(transaction)
