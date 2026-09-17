@@ -27,13 +27,14 @@ erDiagram
     }
 
     mst_account {
-        VARCHAR(10) account PK
+        UUID id PK
+        VARCHAR(20) account UK
         VARCHAR(255) description
         VARCHAR(10) type
-        VARCHAR(10) dimensi1 FK
-        VARCHAR(10) dimensi2 FK
-        VARCHAR(10) dimensi3 FK
-        VARCHAR(10) dimensi4 FK
+        VARCHAR(20) dimensi1
+        VARCHAR(20) dimensi2
+        VARCHAR(20) dimensi3
+        VARCHAR(20) dimensi4
         BOOLEAN active
         TIMESTAMP created_at
         UUID created_by FK
@@ -141,7 +142,7 @@ Menyimpan metode pembayaran yang terikat langsung ke akun General Ledger.
 | `user_id` | UUID | FK -> `users.id`, Nullable | Pemilik metode (jika null = template) |
 | `code` | VARCHAR(30) | Not Null | Kode metode pembayaran |
 | `name` | VARCHAR(100) | Not Null | Nama / label metode |
-| `from_account` | VARCHAR(10) | FK -> `mst_account.account`, Nullable | GL Account referensi |
+| `from_account` | VARCHAR(20) | Nullable | GL Account referensi |
 | `is_active` | BOOLEAN | Default: True | Status aktif (untuk soft-delete) |
 | `is_template` | BOOLEAN | Default: False | Apakah data ini template? |
 | `is_public` | BOOLEAN | Default: False | Apakah template ini publik? |

@@ -7,18 +7,23 @@ from app.core.database import Base
 class MST_Account(Base):
     __tablename__ = "mst_account"
 
-    account = Column(String(10), primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account = Column(String(20), index=True, nullable=False)
     description = Column(String(255), nullable=False)
     type = Column(String(10), nullable=False) # 'Debit' or 'Credit'
     
-    dimensi1 = Column(String(10), ForeignKey("mst_account.account"), nullable=True)
-    dimensi2 = Column(String(10), ForeignKey("mst_account.account"), nullable=True)
-    dimensi3 = Column(String(10), ForeignKey("mst_account.account"), nullable=True)
-    dimensi4 = Column(String(10), ForeignKey("mst_account.account"), nullable=True)
+    dimensi1 = Column(String(20), nullable=True)
+    dimensi2 = Column(String(20), nullable=True)
+    dimensi3 = Column(String(20), nullable=True)
+    dimensi4 = Column(String(20), nullable=True)
     
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('created_by', 'account', name='uq_user_coa_account'),
+    )
 
 
 class Currency(Base):
@@ -49,7 +54,7 @@ class PaymentMethod(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     code = Column(String(30), nullable=False)
     name = Column(String(100), nullable=False)
-    from_account = Column(String(10), ForeignKey("mst_account.account"), nullable=True)
+    from_account = Column(String(20), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_template = Column(Boolean, default=False, nullable=False)
     is_public = Column(Boolean, default=False, nullable=False)
