@@ -14,7 +14,7 @@ void main() {
   
   final secureStorage = SecureStorage();
   final dioClient = DioClient(
-    baseUrl: 'http://localhost:8000', // Points to FastAPI backend
+    baseUrl: const String.fromEnvironment('BASE_URL', defaultValue: 'http://localhost:8000'), // Points to FastAPI backend
     secureStorage: secureStorage,
   );
   
@@ -88,3 +88,4 @@ class AppNavigator extends StatelessWidget {
     );
   }
 }
+
