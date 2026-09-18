@@ -133,6 +133,24 @@ class TransactionCreate(BaseModel):
                 raise ValueError("Tanggal transaksi tidak boleh di masa depan.")
         return v
 
+class TransactionUpdate(BaseModel):
+    type: Optional[str] = Field(None, max_length=50)
+    currency_code: Optional[str] = Field(None, min_length=3, max_length=3)
+    amount: Optional[Decimal] = Field(None, gt=0)
+    payment_method_id: Optional[UUID] = None
+    notes: Optional[str] = None
+    transaction_date: Optional[datetime] = None
+
+    @field_validator("transaction_date")
+    @classmethod
+    def validate_backdate_only(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is not None:
+            now_utc = datetime.now(timezone.utc)
+            target_dt = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+            if target_dt > (now_utc + timedelta(minutes=5)):
+                raise ValueError("Tanggal transaksi tidak boleh di masa depan (hanya backdate yang diizinkan).")
+        return v
+
 class TransactionResponse(BaseModel):
     id: UUID
     type: Optional[str] = None
@@ -142,7 +160,31 @@ class TransactionResponse(BaseModel):
     amount_in_base_currency: Decimal
     payment_method: PaymentMethodResponse
     notes: Optional[str]
+    processed: bool = False
     transaction_date: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class DeletedTransactionResponse(BaseModel):
+    id: UUID
+    original_transaction_id: UUID
+    user_id: UUID
+    type: Optional[str]
+    currency_code: str
+    amount: Decimal
+    exchange_rate: Decimal
+    amount_in_base_currency: Decimal
+    payment_method_id: Optional[UUID]
+    payment_method_name: Optional[str]
+    notes: Optional[str]
+    processed: bool = False
+    transaction_date: datetime
+    original_created_at: datetime
+    original_updated_at: datetime
+    deleted_at: datetime
 
     class Config:
         from_attributes = True

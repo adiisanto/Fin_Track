@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import engine, Base
 from app.models.user import User
-from app.models.finance import MST_Account, Currency, CurrencyRate, PaymentMethod, Transaction
+from app.models.finance import MST_Account, Currency, CurrencyRate, PaymentMethod, Transaction, DeletedTransaction
 
 async def seed_data():
     # Import inside to use the connection

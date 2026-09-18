@@ -1,83 +1,156 @@
-﻿# Issue: Global Floating Dialog Input Transaction (Pencatatan Transaksi Keuangan)
+# Issue: Transaction History & Deleted Transactions Audit Log
 
 ## 1. Ringkasan Fitur & Latar Belakang
-Fitur **Input Transaction** adalah fitur pencatatan transaksi keuangan pengguna ke dalam tabel `transactions`. 
+Fitur **Transaction History** adalah halaman yang memuat daftar lengkap riwayat transaksi keuangan yang telah diinput oleh pengguna (melalui fitur Input Transaksi). Selain melihat riwayat transaksi aktif, pengguna juga dapat melakukan penyaringan (*filtering*), pengubahan (*edit*), dan penghapusan (*delete*) transaksi.
 
-Untuk memberikan fleksibilitas maksimal, antarmuka input transaksi tidak dibuat sebagai halaman penuh (*full screen*) yang terisolasi, melainkan berbentuk **Floating Dialog / Floating Card** ringkas yang dapat dipanggil dan diakses dari **halaman manapun (omnipresent / global access)** di dalam aplikasi.
+Untuk kebutuhan audit dan keamanan data finansial, setiap transaksi yang dihapus tidak langsung hilang permanen begitu saja, melainkan dipindahkan/disimpan ke dalam tabel log khusus yaitu **`deleted_transactions`**. Pengguna dapat melihat daftar transaksi yang pernah mereka hapus melalui halaman **View Deleted Transactions**.
 
-### Karakteristik & Kebutuhan Utama:
-1. **Global Access (Omnipresent)**: 
-   - Pengguna dapat memunculkan form input transaksi kapan saja dari halaman manapun (Dashboard, Halaman Kelola Akun, Pengaturan, dsb.) tanpa kehilangan konteks halaman yang sedang dibuka.
-   - Dipicu melalui sebuah tombol melayang (*Floating Action Button / FAB*) atau tombol trigger global yang intuitif.
-2. **Bentuk Floating Card Ringkas & Auto-Hide**:
-   - Dialog berbentuk kartu (*Card*) berukuran kecil (*compact modal*) dengan penataan rapi agar cepat diisi.
-   - Bersifat **auto-hide**: dialog otomatis tertutup ketika pengguna menyentuh/mengklik area luar kartu (*barrier dismissible*), menekan tombol batal/tutup, atau ketika transaksi berhasil disimpan.
-3. **Inputan & Aturan Data Transaksi**:
-   - **`type` (Tipe Transaksi)**: TextField referensi ke Master Type. Karena modul master type saat ini belum dibuat, field ini bersifat **opsional / dapat bernilai `NULL`**. Pengguna dapat mengisinya dengan teks bebas atau mengosongkannya.
-   - **`currency_code` (Mata Uang Transaksi)**: Referensi ke tabel `currencies`, **wajib diisi (Not Null)**. Nilai bawaan (*default value*) otomatis mengambil `base_currency` milik pengguna yang sedang login (dari tabel `users`).
-   - **`amount` (Nominal Transaksi)**: Input angka desimal positif (`> 0`) dalam mata uang `currency_code` yang dipilih. Wajib diisi.
-   - **`amount_in_base_currency` (Nominal dalam Base Currency)**: **Read-only (tidak dapat diedit secara manual)**. Merupakan hasil kalkulasi otomatis sistem:
-     $$\text{amount\_in\_base\_currency} = \text{amount} \times \text{currency\_rate}$$
-     Nilai kurs diambil dari tabel `currency_rates` untuk pasangan mata uang yang dipilih terhadap `base_currency` user. Jika mata uang yang dipilih sama dengan `base_currency`, maka kurs adalah `1.0`.
-   - **`payment_method_id` (Metode Pembayaran)**: Referensi ke tabel `payment_methods` (hanya metode aktif milik user yang bersangkutan). Dilengkapi **popup lookup value** interaktif dengan filter pencarian kode maupun nama metode pembayaran.
-   - **`notes` (Catatan Transaksi)**: Input teks berupa kotak besar / multiline (*text area*), bersifat opsional (*nullable*).
-   - **`transaction_date` (Tanggal & Waktu Transaksi)**: Input `DATETIME` (Tanggal & Jam). Bersifat opsional, dengan nilai bawaan adalah timestamp waktu saat ini (*current timestamp*). **Aturan Validasi Ketat**: **Hanya bisa backdate** (tanggal/waktu lampau hingga saat ini). **DILARANG memilih tanggal/jam di masa depan (*future date*)**.
-   - **Tombol Submit**: Memvalidasi seluruh masukan, menyimpan transaksi ke backend, memberikan notifikasi keberhasilan, me-refresh data ringkasan jika relevan, lalu menutup floating dialog.
+Selain itu, setiap transaksi memiliki status **`processed`** (tipe data Boolean dengan nilai default `FALSE`). Kolom ini bersifat **read-only bagi user (tidak dapat diedit)** dan wajib ditampilkan pada halaman riwayat transaksi dalam bentuk **checkbox**.
+
+### 🔑 Aturan Utama & Hak Akses (Multi-Tenancy Isolation):
+1. **Autentikasi Wajib**: Halaman ini hanya dapat diakses oleh user yang telah login (`get_current_user`).
+2. **Isolasi Data Antar Pengguna**: User A **TIDAK BISA** melihat, mengedit, menghapus, atau mengakses riwayat transaksi maupun log transaksi terhapus milik User B (`user_id == current_user.id`).
+3. **Kolom `processed`**:
+   - Kolom berjenis `Boolean` dengan nilai bawaan `FALSE`.
+   - Bersifat **sistemik / read-only bagi user** (pengguna dilarang mengubah status ini secara manual melalui form/modal edit).
+   - Ditampilkan pada tabel / list transaksi dalam bentuk **Checkbox** (non-interactive / read-only).
+4. **Validasi Hapus (Delete Guard)**:
+   - Transaksi dengan status **`processed = TRUE` TIDAK DAPAT DIHAPUS** oleh user.
+   - Usaha penghapusan transaksi terproses wajib digagalkan oleh backend dengan pesan error penolakan.
+5. **Audit Trail Log**: 
+   - Setiap operasi edit transaksi wajib memperbarui kolom `updated_at` dengan timestamp terkini (UTC).
+   - Setiap operasi hapus transaksi (yang berstatus `processed = FALSE`) wajib menyalin data transaksi ke tabel `deleted_transactions` beserta informasi waktu penghapusan (`deleted_at`) dan identitas user yang menghapus (`deleted_by`), sebelum data transaksi dihapus dari tabel `transactions`.
 
 ---
 
-## 2. Perubahan Skema Database (Database & Models)
+## 2. Kebutuhan Fungsional & Logika Bisnis
 
-### A. Model `Transaction` (`backend/app/models/finance.py`)
-Tabel `transactions` saat ini mewajibkan `type` (`nullable=False`). Karena modul Master Type belum diimplementasikan dan spesifikasi mensyaratkan `type` dapat bernilai `NULL`, kolom `type` harus disesuaikan menjadi **nullable**:
+### A. Fitur Filter pada Halaman Transaction History
+Halaman riwayat transaksi wajib menyediakan filter dinamis dengan tombol *Reset Filter* dan *Apply Filter*:
+1. **Filter by `transaction_date` (Rentang Tanggal)**:
+   - Disediakan dalam bentuk **Date Picker** (atau *Date Range Picker*: `start_date` dan `end_date`).
+   - Menyaring transaksi berdasarkan rentang tanggal terjadinya transaksi.
+2. **Filter by `type` (Tipe Transaksi)**:
+   - Input/Dropdown pemilih tipe transaksi dengan opsi lookup ke master/daftar tipe yang pernah digunakan atau enum (misal: `EXPENSE`, `INCOME`, atau custom type). Menyediakan opsi "Semua Tipe".
+3. **Filter by `notes` (Catatan)**:
+   - Input teks pencarian (*search field*) yang melakukan pencarian substring (case-insensitive) pada catatan transaksi.
+4. **Filter by `payment_method` (Metode Pembayaran)**:
+   - Tombol/Input lookup value yang membuka popup modal daftar metode pembayaran aktif milik user (`PaymentMethodLookupDialog`), memungkinkan user memilih metode pembayaran spesifik untuk memfilter transaksi.
 
+### B. Tampilan Tabel & Kolom `processed`
+- Setiap baris transaksi di halaman Transaction History menampilkan kolom:
+  - **Processed**: Komponen **`Checkbox`** (bersifat read-only / `onChanged: null`) yang merefleksikan nilai `processed` (centang jika `True`, tidak tercentang jika `False`).
+  - **Tanggal Transaksi (`transaction_date`)**
+  - **Tipe Transaksi (`type`)**
+  - **Nominal & Mata Uang (`amount` & `currency_code`)**
+  - **Nominal Base Currency (`amount_in_base_currency`)**
+  - **Metode Pembayaran (`payment_method`)**
+  - **Catatan (`notes`)**
+  - **Aksi**: Tombol Edit & Hapus (tombol Hapus di-disable jika `processed == True`).
+
+### C. Fitur Aksi Transaksi (Edit & Hapus)
+1. **Edit Transaksi**:
+   - Tombol aksi di setiap baris/kartu transaksi untuk memunculkan dialog/modal edit (`EditTransactionDialog`).
+   - Field yang dapat diubah: `type`, `amount`, `currency_code`, `payment_method_id`, `notes`, dan `transaction_date`.
+   - **PROTEKSI FIELD**: Kolom `processed` **TIDAK BOLEH** dapat diedit oleh user pada form ini.
+   - **Kalkulasi Kurs Otomatis**: Jika `amount` atau `currency_code` diubah, `amount_in_base_currency` wajib dikalkulasi ulang secara realtime menggunakan exchange rate terkini.
+   - **Validasi Backdate**: `transaction_date` tetap tunduk pada aturan validasi ketat: **hanya boleh backdate** (tidak boleh tanggal masa depan / *future date*).
+   - **Pembaruan Timestamp**: Kolom `updated_at` otomatis terupdate ke timestamp saat perubahan disimpan.
+2. **Hapus Transaksi (dengan Validasi `processed = TRUE`)**:
+   - **PENTING - Delete Guard**:
+     - Sistem wajib mengecek nilai `processed` sebelum memproses penghapusan.
+     - Jika transaksi bernilai **`processed = TRUE`**, sistem **DILARANG MENGHAPUS** transaksi dan wajib mengembalikan pesan kesalahan (*HTTP 400 Bad Request*): `"Transaksi yang sudah diproses tidak dapat dihapus."`.
+   - Jika `processed = FALSE`:
+     - Tampilkan konfirmasi pop-up (*Confirmation Dialog*): "Apakah Anda yakin ingin menghapus transaksi ini? Data yang dihapus akan dipindahkan ke riwayat transaksi terhapus."
+     - Saat dikonfirmasi:
+       - Sistem membuat *record* baru di tabel `deleted_transactions` yang menampung seluruh *snapshot* data transaksi terkait (termasuk status `processed = FALSE`), `deleted_at = now(utc)`, dan `deleted_by = current_user.id`.
+       - Sistem menghapus *record* transaksi tersebut dari tabel `transactions`.
+       - Menampilkan notifikasi sukses dan memperbarui tabel riwayat transaksi secara otomatis.
+
+### D. Halaman View Deleted Transactions
+- Halaman/layar khusus (atau sub-view/modal) yang dapat diakses melalui tombol navigasi di halaman Transaction History (misal: tombol "Riwayat Terhapus" / "Trash Log").
+- Menampilkan daftar transaksi yang telah dihapus milik pengguna saat ini.
+- Bersifat **Read-Only** (hanya untuk melihat informasi historis transaksi yang pernah dihapus).
+- Menampilkan kolom: ID transaksi asli, Status Processed (Checkbox/Label), Tipe, Nominal, Mata Uang, Nilai dalam Base Currency, Metode Pembayaran, Catatan, Tanggal Transaksi, dan Waktu Dihapus (`deleted_at`).
+
+---
+
+## 3. Perubahan Skema Database (Database & Models)
+
+### A. Perbarui Model `Transaction` (`backend/app/models/finance.py`)
+Tambahkan kolom `processed` pada model `Transaction`:
 ```python
 class Transaction(Base):
     __tablename__ = "transactions"
 
+    # ... kolom eksisting ...
+    processed = Column(Boolean, default=False, nullable=False)
+```
+
+### B. Tambah Model `DeletedTransaction` (`backend/app/models/finance.py`)
+Tambahkan model tabel `deleted_transactions` ke dalam `backend/app/models/finance.py`:
+
+```python
+class DeletedTransaction(Base):
+    __tablename__ = "deleted_transactions"
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    original_transaction_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     
-    # PERUBAHAN: Ubah nullable menjadi True untuk mendukung type opsional / NULL
-    type = Column(String(50), nullable=True) 
-    
+    type = Column(String(50), nullable=True)
     currency_code = Column(String(3), ForeignKey("currencies.code"), nullable=False)
     amount = Column(Numeric(15, 2), nullable=False)
     exchange_rate = Column(Numeric(18, 6), nullable=False)
     amount_in_base_currency = Column(Numeric(15, 2), nullable=False)
-    
-    payment_method_id = Column(UUID(as_uuid=True), ForeignKey("payment_methods.id"), nullable=False)
+    payment_method_id = Column(UUID(as_uuid=True), nullable=True) # Dapat nullable jika metode pembayaran aslinya terhapus
+    payment_method_name = Column(String(100), nullable=True) # Snapshot nama metode pembayaran
     notes = Column(Text, nullable=True)
+    processed = Column(Boolean, default=False, nullable=False) # Snapshot status processed saat dihapus
     
-    transaction_date = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    transaction_date = Column(DateTime(timezone=True), nullable=False)
+    original_created_at = Column(DateTime(timezone=True), nullable=False)
+    original_updated_at = Column(DateTime(timezone=True), nullable=False)
+    
+    deleted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 ```
 
-> **Catatan Sinkronisasi DB**: Jalankan `python init_db.py` (atau `reset_db.py` kemudian `init_db.py` sesuai instruksi proyek) untuk menerapkan modifikasi kolom `type` menjadi nullable.
+### C. Sinkronisasi Skrip Database
+- Pastikan model `DeletedTransaction` terdaftar di `backend/init_db.py` dan `reset_db.py` sehingga tabel terbuat saat sinkronisasi ulang database (`python reset_db.py ; python init_db.py`).
 
 ---
 
-## 3. Desain Backend API (FastAPI)
+## 4. Desain Backend API (FastAPI)
 
 ### A. Pydantic Schemas (`backend/app/schemas/finance.py`)
 
-Perbarui skema `TransactionCreate` dan `TransactionResponse`:
+Tambahkan/perbarui skema untuk Update, Response, dan Filter:
 
 ```python
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 class TransactionCreate(BaseModel):
-    type: Optional[str] = Field(None, max_length=50, description="Tipe transaksi (referensi master type mendatang, dapat NULL)")
-    currency_code: str = Field(..., min_length=3, max_length=3, description="Kode mata uang transaksi")
-    amount: Decimal = Field(..., gt=0, description="Nominal transaksi (> 0)")
-    payment_method_id: UUID = Field(..., description="ID metode pembayaran")
-    notes: Optional[str] = Field(None, description="Catatan transaksi opsional")
-    transaction_date: Optional[datetime] = Field(None, description="Tanggal transaksi (hanya backdate / <= now)")
+    type: Optional[str] = Field(None, max_length=50)
+    currency_code: str = Field(..., min_length=3, max_length=3)
+    amount: Decimal = Field(..., gt=0)
+    payment_method_id: UUID
+    notes: Optional[str] = None
+    transaction_date: Optional[datetime] = None
+    # Catatan: 'processed' TIDAK dimasukkan ke TransactionCreate, default server adalah False
+
+class TransactionUpdate(BaseModel):
+    type: Optional[str] = Field(None, max_length=50)
+    currency_code: Optional[str] = Field(None, min_length=3, max_length=3)
+    amount: Optional[Decimal] = Field(None, gt=0)
+    payment_method_id: Optional[UUID] = None
+    notes: Optional[str] = None
+    transaction_date: Optional[datetime] = None
+    # PENTING: 'processed' TIDAK boleh dimasukkan ke TransactionUpdate karena tidak dapat diedit oleh user
 
     @field_validator("transaction_date")
     @classmethod
@@ -85,7 +158,7 @@ class TransactionCreate(BaseModel):
         if v is not None:
             now_utc = datetime.now(timezone.utc)
             target_dt = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
-            if target_dt > now_utc:
+            if target_dt > (now_utc + timedelta(minutes=5)):
                 raise ValueError("Tanggal transaksi tidak boleh di masa depan (hanya backdate yang diizinkan).")
         return v
 
@@ -96,238 +169,211 @@ class TransactionResponse(BaseModel):
     amount: Decimal
     exchange_rate: Decimal
     amount_in_base_currency: Decimal
-    payment_method_id: UUID
-    payment_method_code: Optional[str] = None
-    payment_method_name: Optional[str] = None
-    notes: Optional[str] = None
+    payment_method: PaymentMethodResponse
+    notes: Optional[str]
+    processed: bool = False # Field status processed
     transaction_date: datetime
     created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class DeletedTransactionResponse(BaseModel):
+    id: UUID
+    original_transaction_id: UUID
+    user_id: UUID
+    type: Optional[str]
+    currency_code: str
+    amount: Decimal
+    exchange_rate: Decimal
+    amount_in_base_currency: Decimal
+    payment_method_id: Optional[UUID]
+    payment_method_name: Optional[str]
+    notes: Optional[str]
+    processed: bool = False
+    transaction_date: datetime
+    original_created_at: datetime
+    original_updated_at: datetime
+    deleted_at: datetime
 
     class Config:
         from_attributes = True
 ```
 
-### B. Endpoint Transaksi (`backend/app/api/v1/finance.py`)
+### B. REST API Endpoints (`backend/app/api/v1/finance.py`)
 
-Perbarui endpoint `POST /api/v1/transactions`:
-- **Path**: `POST /api/v1/transactions`
-- **Autentikasi**: Wajib (`current_user: User = Depends(get_current_user)`).
-- **Logika Eksekusi**:
-  1. **Validasi Mata Uang**: Pastikan `currency_code` terdaftar dan aktif di tabel `currencies`. Jika tidak valid, lempar `HTTP 400 Bad Request`.
-  2. **Validasi Metode Pembayaran**:
-     - Cari `PaymentMethod` dengan `id == trans_in.payment_method_id`.
-     - Harus milik `current_user.id` (atau template publik sistem jika diizinkan) dan berstatus `is_active == True`.
-     - Jika tidak ditemukan atau nonaktif, lempar `HTTP 400 Bad Request ("Metode pembayaran tidak valid atau tidak aktif.")`.
-  3. **Validasi Tanggal Transaksi (Backdate Check)**:
-     - Jika `trans_in.transaction_date` kosong, gunakan `datetime.now(timezone.utc)`.
-     - Jika diisi, pastikan `transaction_date <= datetime.now(timezone.utc)`. Jika di masa depan, lempar `HTTP 400 Bad Request`.
-  4. **Kalkulasi Kurs & Base Currency**:
-     - Jika `currency_code == current_user.base_currency`:
-       - `exchange_rate = Decimal("1.0")`
-     - Jika berbeda:
-       - Query kurs aktif terbaru dari tabel `currency_rates`:
-         ```sql
-         SELECT rate FROM currency_rates 
-         WHERE from_currency = :currency_code 
-           AND to_currency = :user_base_currency 
-           AND valid_to IS NULL 
-         ORDER BY valid_from DESC LIMIT 1;
-         ```
-       - Jika tidak ditemukan kurs aktif, lempar `HTTP 400 Bad Request ("Kurs aktif tidak ditemukan untuk mata uang terpilih.")`.
-     - Hitung:
-       $$\text{amount\_in\_base} = \text{trans\_in.amount} \times \text{exchange\_rate}$$
-  5. **Simpan Data Transaksi**:
-     - Insert record baru ke model `Transaction`.
-     - Simpan `type = trans_in.type.strip() if trans_in.type else None`.
-     - Commit dan refresh data.
-  6. **Return Response**:
-     - Format JSON standar Fin_Track:
-       ```json
-       {
-         "success": true,
-         "message": "Transaksi berhasil dicatat.",
-         "data": {
-           "id": "uuid...",
-           "type": "Makan Siang",
-           "currency_code": "USD",
-           "amount": 15.50,
-           "exchange_rate": 15800.0,
-           "amount_in_base_currency": 244900.0,
-           "payment_method_id": "uuid...",
-           "notes": "Traktir teman kantor",
-           "transaction_date": "2026-09-17T12:30:00Z"
-         }
-       }
-       ```
+Implementasikan endpoint-endpoint berikut dengan proteksi `current_user: User = Depends(get_current_user)`:
 
----
+#### 1. `GET /api/v1/transactions`
+- **Tujuan**: Mengambil daftar transaksi aktif milik pengguna yang sedang login dengan dukungan filtering.
+- **Query Parameters**:
+  - `start_date` (Optional[datetime]): Filter tanggal awal transaksi (`transaction_date >= start_date`).
+  - `end_date` (Optional[datetime]): Filter tanggal akhir transaksi (`transaction_date <= end_date`).
+  - `type` (Optional[str]): Filter exact/case-insensitive match tipe transaksi.
+  - `notes` (Optional[str]): Filter substring pencarian pada `notes` (`notes ILIKE '%notes%'`).
+  - `payment_method_id` (Optional[UUID]): Filter berdasarkan ID metode pembayaran.
+  - `skip` (int = 0, ge=0) dan `limit` (int = 50, le=100) untuk pagination.
+- **Query Constraints**: Wajib menyertakan filter `Transaction.user_id == current_user.id`, diurutkan berdasarkan `Transaction.transaction_date.desc()`.
+- **Response**: List of `TransactionResponse` (atau dictionary berisikan data transaksi lengkap dengan field `processed`).
 
-## 4. Desain Frontend (Flutter)
+#### 2. `GET /api/v1/transactions/{id}`
+- **Tujuan**: Mengambil detail satu transaksi aktif.
+- **Validasi**: Pastikan `transaction.user_id == current_user.id`, jika tidak ditemukan kembalikan HTTP 404.
 
-### A. Arsitektur Komponen & UI Placement
-Agar floating dialog dapat dipanggil dari halaman manapun:
-1. **Global Floating Action Button (FAB) / Trigger**:
-   - Dapat disematkan pada shell utama navigasi (`DashboardScreen`, App Bar action, atau wrapper layout).
-   - Memiliki ikon transaksi (misal: `Icons.add` atau `Icons.receipt_long`) yang selalu terlihat jelas (*floating*).
-2. **Dialog Form Ringkas (`QuickTransactionDialog`)**:
-   - Dipanggil menggunakan `showDialog(context: context, barrierDismissible: true, builder: ...)` sehingga memiliki sifat **auto-hide** saat tap di luar dialog.
-   - Berbentuk `Card` / `Dialog` berukuran kecil-menengah (lebar proporsional max 480px di desktop/tablet, padding 16px, `clipBehavior: Clip.antiAlias`).
-   - Menyediakan tombol "X" (close) di kanan atas serta tombol Batal dan Simpan.
+#### 3. `PUT /api/v1/transactions/{id}`
+- **Tujuan**: Memperbarui transaksi yang ada.
+- **Body**: `TransactionUpdate`
+- **Logika**:
+  - Cek keberadaan transaksi dan pastikan `transaction.user_id == current_user.id`.
+  - Jika `currency_code` atau `amount` berubah, lakukan validasi currency dan hitung ulang `exchange_rate` serta `amount_in_base_currency`.
+  - Jika `payment_method_id` berubah, validasi metode pembayaran milik user.
+  - Jika `transaction_date` diubah, jalankan validasi backdate.
+  - Kolom `processed` **TIDAK DIUBAH** (tetap mempertahankan nilai yang ada).
+  - Update `updated_at = datetime.now(timezone.utc)`.
+  - Commit ke database dan kembalikan transaksi yang telah diperbarui.
 
-### B. Komponen Form Input Transaksi (`QuickTransactionDialog`)
-Form di dalam dialog berisi elemen-elemen berikut secara berurutan:
-1. **Header Dialog**:
-   - Judul ringkas: `"Catat Transaksi"`.
-   - Tombol icon tutup (`IconButton(Icons.close)`).
-2. **Field `type`**:
-   - `TextFormField` bertuliskan `"Tipe Transaksi (Opsional)"`.
-   - Hint: `"Contoh: Operasional, Pribadi, dll."`.
-   - Boleh kosong (*nullable*).
-3. **Baris Mata Uang & Kalkulasi Kurs**:
-   - **`currency_code`**: `DropdownButtonFormField<String>` memuat daftar mata uang aktif (`FinanceRepository.getCurrencies`).
-     - Nilai *initial / default*: `currentUser.baseCurrency` (misal: `IDR`).
-   - **Kalkulator Kurs Realtime**:
-     - Setiap kali mata uang dipilih atau nominal diubah, ambil kurs terbaru melalui `getLatestCurrencyRate(selectedCurrency, baseCurrency)`.
-     - Tampilkan indikator kurs kecil di bawah dropdown, misal: `1 USD = Rp 15.800`.
-4. **Field `amount`**:
-   - `TextFormField` dengan tipe keyboard angka/desimal (`TextInputType.numberWithOptions(decimal: true)`).
-   - Label: `"Nominal Transaksi"`.
-   - Validasi: Wajib diisi, harus bernilai angka > 0.
-5. **Field `amount_in_base_currency` (Read-only)**:
-   - `TextFormField` dengan properti:
-     - `readOnly: true`
-     - `enabled: false` (atau background sedikit abu-abu).
-   - Label: `"Total dalam Mata Uang Utama ({base_currency})"`.
-   - Nilai terformat otomatis sesuai kalkulasi `amount * rate`.
-6. **Field `payment_method` dengan Popup Lookup**:
-   - Inputfield readonly yang menampilkan `"Nama Metode Pembayaran (Kode)"`.
-   - Tombol icon cari (`Icons.search`) yang saat diklik akan memunculkan **`PaymentMethodLookupDialog`**.
-   - Validasi: Wajib dipilih.
-7. **Popup Lookup Modal (`PaymentMethodLookupDialog`)**:
-   - Menampilkan daftar metode pembayaran aktif (`FinanceRepository.getPaymentMethods(includeInactive: false)`).
-   - Menyediakan kolom pencarian (*search field*) *real-time* untuk memfilter berdasarkan kode atau nama metode.
-   - Saat salah satu item diklik, modal lookup tertutup dan mengembalikan data `PaymentMethod` terpilih.
-8. **Field `transaction_date` (Date & Time Picker Backdate)**:
-   - Field tap-able yang menampilkan format tanggal & jam: `yyyy-MM-dd HH:mm`.
-   - Default: Tanggal dan jam saat form dibuka (`DateTime.now()`).
-   - Saat diklik:
-     - Buka `showDatePicker` dengan batas:
-       - `firstDate: DateTime(2000)`
-       - `lastDate: DateTime.now()` (Mencegah tanggal masa depan).
-     - Setelah tanggal dipilih, buka `showTimePicker`.
-     - Jika tanggal yang dipilih adalah **hari ini**, validasi jam & menit tidak boleh melebihi jam & menit saat ini. Jika melebihi, setel otomatis ke waktu sekarang dan tampilkan peringatan bahwa masa depan tidak diperkenankan.
-9. **Field `notes`**:
-   - `TextFormField` multiline (`maxLines: 3`, `minLines: 2`).
-   - Label: `"Catatan (Opsional)"`.
-10. **Aksi Tombol (Footer)**:
-    - Tombol `Batal` (TextButton).
-    - Tombol `Simpan Transaksi` (ElevatedButton) dengan *loading indicator* saat proses submit berlangsung.
+#### 4. `DELETE /api/v1/transactions/{id}`
+- **Tujuan**: Menghapus transaksi dan memindahkannya ke tabel `deleted_transactions`.
+- **Logika**:
+  - Cek transaksi dan pastikan `transaction.user_id == current_user.id` (jika tidak ditemukan return 404).
+  - **VALIDASI DELETE GUARD**:
+    - Periksa apakah `transaction.processed == True`.
+    - Jika `transaction.processed == True`: Batalkan operasi dan lempar `HTTPException(status_code=400, detail="Transaksi yang sudah diproses tidak dapat dihapus.")`.
+  - Jika `transaction.processed == False`:
+    - Ambil data nama payment method (jika ada) untuk snapshot.
+    - Buat objek `DeletedTransaction`:
+      - Salin seluruh field dari `Transaction` (termasuk `processed = False`).
+      - `original_transaction_id = transaction.id`
+      - `original_created_at = transaction.created_at`
+      - `original_updated_at = transaction.updated_at`
+      - `deleted_at = datetime.now(timezone.utc)`
+      - `deleted_by = current_user.id`
+    - `db.add(deleted_tx)`
+    - `await db.delete(transaction)`
+    - `await db.commit()`
+    - Kembalikan pesan sukses: `{"success": True, "message": "Transaksi berhasil dihapus dan dicatat di log."}`.
 
-### C. State Management (BLoC / Repository Integration)
-1. **Repository (`FinanceRepository`)**:
-   - Memastikan method `createTransaction` menerima parameter:
-     ```dart
-     Future<void> createTransaction({
-       String? type,
-       required String currencyCode,
-       required double amount,
-       required String paymentMethodId,
-       String? notes,
-       DateTime? transactionDate,
-     });
-     ```
-2. **BLoC (`TransactionBloc`)**:
-   - Event: `TransactionCreateSubmitted(data)`.
-   - State: `TransactionCreateInProgress`, `TransactionCreateSuccess`, `TransactionCreateFailure(error)`.
-   - Pada saat `TransactionCreateSuccess`:
-     - Tampilkan SnackBar sukses: `"Transaksi berhasil dicatat."`.
-     - Tutup dialog (`Navigator.of(context).pop(true)`).
-     - Picu refresh pada widget atau listener halaman aktif (misal `DashboardBloc.add(DashboardFetchRequested())`).
+#### 5. `GET /api/v1/transactions/deleted`
+- **Tujuan**: Mengambil daftar riwayat transaksi yang dihapus milik user yang sedang login.
+- **Query Constraints**: `DeletedTransaction.user_id == current_user.id`, diurutkan `deleted_at.desc()`.
+- **Response**: List of `DeletedTransactionResponse`.
 
 ---
 
-## 5. Validasi & Aturan Bisnis (Business Rules)
+## 5. Desain Frontend Flutter
 
-| No | Aturan | Mekanisme Penanganan |
-| :---: | :--- | :--- |
-| 1 | **Tipe Transaksi Opsional** | Field `type` boleh kosong. Jika kosong, kirim `null` ke API dan simpan sebagai `NULL` di DB. |
-| 2 | **Default Currency** | Nilai awal mata uang wajib membaca `base_currency` pengguna login dari session/user model. |
-| 3 | **Nominal Wajib Positif** | Nilai `amount` harus `> 0`. Tolak input 0, angka negatif, atau format non-numerik. |
-| 4 | **Kalkulasi Kurs Otomatis** | `amount_in_base_currency` dihitung secara dinamis. Nilai tidak dapat diinput/diubah manual oleh pengguna. |
-| 5 | **Lookup Payment Method** | Pengguna hanya dapat memilih metode pembayaran yang berstatus aktif (`is_active = True`) milik user tersebut. |
-| 6 | **Strict Backdate Only** | Tanggal dan waktu transaksi `transaction_date` **tidak boleh berada di masa depan**. Sistem frontend membatasi picker dan backend menolak dengan pesan error jika `transaction_date > now()`. |
-| 7 | **Auto-Hide Behavior** | Dialog wajib bisa ditutup hanya dengan mengklik area gelap di luar kartu (*dismiss on barrier touch*) untuk kenyamanan navigasi pengguna. |
+### A. Model (`frontend/lib/features/finance/domain/models.dart`)
+- Perbarui model `Transaction`:
+  - Tambahkan field `final bool processed;` (default `false`).
+  - Tambahkan field `final DateTime? updatedAt;`.
+  - Update method `fromJson` dan `toJson`.
+- Tambahkan model `DeletedTransaction` (termasuk `final bool processed;`) dengan parser `fromJson` dan `toJson`.
 
----
+### B. Repository (`frontend/lib/features/finance/data/finance_repository.dart`)
+Tambahkan method API berikut:
+- `Future<List<Transaction>> getTransactions({DateTime? startDate, DateTime? endDate, String? type, String? notes, String? paymentMethodId})`
+- `Future<Transaction> updateTransaction(String id, {String? type, String? currencyCode, double? amount, String? paymentMethodId, String? notes, DateTime? transactionDate})`
+- `Future<void> deleteTransaction(String id)`
+- `Future<List<DeletedTransaction>> getDeletedTransactions()`
 
-## 6. Panduan Langkah Pengerjaan (Step-by-Step Implementation Guide)
+### C. State Management BLoC (`frontend/lib/features/finance/presentation/bloc/`)
+Buat `TransactionHistoryBloc`:
+- **Events**:
+  - `TransactionHistoryFetchRequested({filters...})`
+  - `TransactionHistoryDeleteRequested(String id)`
+  - `TransactionHistoryUpdateRequested(...)`
+  - `DeletedTransactionsFetchRequested()`
+- **States**:
+  - `TransactionHistoryLoading`
+  - `TransactionHistoryLoaded(List<Transaction> transactions, ActiveFilters filters)`
+  - `DeletedTransactionsLoaded(List<DeletedTransaction> deletedTransactions)`
+  - `TransactionHistoryOperationSuccess(String message)`
+  - `TransactionHistoryError(String message)`
 
-Untuk pengembang junior atau AI model pelaksana, ikuti langkah-langkah terstruktur berikut:
-
-### Langkah 1: Backend Database & Schema
-1. Buka `backend/app/models/finance.py`:
-   - Ubah kolom `type` pada class `Transaction` agar `nullable=True`.
-2. Buka `backend/app/schemas/finance.py`:
-   - Perbarui `TransactionCreate` agar `type` menjadi `Optional[str] = None` dan tambahkan validator `validate_backdate_only`.
-3. Buka `backend/app/api/v1/finance.py`:
-   - Di endpoint `create_transaction`, tambahkan validasi `transaction_date <= datetime.now(timezone.utc)`.
-   - Tangani penyimpanan `type` yang dapat berupa `None`.
-4. Jalankan script inisialisasi DB untuk memastikan skema terupdate:
-   ```powershell
-   .\backend\venv\Scripts\python backend/reset_db.py
-   .\backend\venv\Scripts\python backend/init_db.py
-   ```
-
-### Langkah 2: Frontend Data Layer
-1. Buka `frontend/lib/features/finance/data/finance_repository.dart`:
-   - Perbarui signature method `createTransaction` agar menerima parameter `String? type` dan `DateTime? transactionDate`.
-   - Sertakan `type` dan `transaction_date` (format ISO 8601 UTC) pada payload request POST `/api/v1/transactions`.
-
-### Langkah 3: Frontend UI Components
-1. Buat widget dialog lookup pembayaran di file terpisah atau di dalam folder widgets:
-   - `frontend/lib/features/finance/presentation/widgets/payment_method_lookup_dialog.dart`.
-2. Buat widget dialog transaksi utama:
-   - `frontend/lib/features/finance/presentation/widgets/quick_transaction_dialog.dart`.
-   - Terapkan controller dan logic perubahan kurs realtime (`_onCurrencyOrAmountChanged`).
-   - Terapkan date & time picker dengan validasi `lastDate: DateTime.now()`.
-3. Buat helper function untuk menampilkan dialog ini dari mana saja:
-   ```dart
-   Future<bool?> showQuickTransactionDialog(BuildContext context) {
-     return showDialog<bool>(
-       context: context,
-       barrierDismissible: true,
-       builder: (ctx) => const QuickTransactionDialog(),
-     );
-   }
-   ```
-4. Tambahkan tombol Floating Action Button (FAB) atau tombol pemanggil di `DashboardScreen` (dan global shell/app bar jika ada) yang memanggil `showQuickTransactionDialog(context)`.
-5. Jika hasil dialog mengembalikan `true`, trigger refresh dashboard summary:
-   ```dart
-   final result = await showQuickTransactionDialog(context);
-   if (result == true) {
-     context.read<DashboardBloc>().add(DashboardFetchRequested(_selectedTimeframe));
-   }
-   ```
-
-### Langkah 4: Pembaruan Dokumentasi
-Perbarui dokumen proyek berikut:
-1. `docs/table.md`: Perbarui keterangan kolom `transactions.type` menjadi `Nullable`.
-2. `docs/routes.md`: Catat bahwa `POST /api/v1/transactions` kini mendukung `type: Optional[str]` dan validasi backdate.
-3. `docs/features.md`: Tambahkan entri fitur "Global Floating Dialog Input Transaction" dengan status pengerjaan yang sesuai.
+### D. Screens & UI Components
+1. **`TransactionHistoryScreen` (`screens/transaction_history_screen.dart`)**:
+   - **Header & Action Bar**:
+     - Judul "Riwayat Transaksi".
+     - Tombol "Lihat Transaksi Terhapus" (ikon `Icons.delete_outline` / `Icons.history`).
+   - **Filter Panel / Bar**:
+     - Input Date Range Picker (Tombol pilih tanggal mulai & selesai).
+     - Dropdown / Text pemilih `type`.
+     - TextField pencarian `notes`.
+     - Tombol lookup pemilih `Payment Method` (memanggil `PaymentMethodLookupDialog`).
+     - Tombol "Terapkan Filter" dan "Reset".
+   - **Tabel / Daftar Kartu Transaksi**:
+     - Kolom tabel:
+       - **Processed**: `Checkbox(value: tx.processed, onChanged: null)` (read-only checkbox).
+       - **Tanggal**: Format `yyyy-MM-dd HH:mm`.
+       - **Tipe**: Label teks / badge.
+       - **Catatan**: Substring / multiline singkat.
+       - **Metode Pembayaran**: Nama metode pembayaran.
+       - **Nominal**: Format currency beserta konversi base currency.
+       - **Aksi**: Tombol Edit (pensil) dan Tombol Hapus (tempat sampah, *disabled* / diberi tooltip jika `tx.processed == true`).
+2. **`EditTransactionDialog` (`widgets/edit_transaction_dialog.dart`)**:
+   - Dialog form yang terisi (*pre-filled*) dengan data transaksi terpilih.
+   - Kolom `processed` **TIDAK BISA** diedit (bisa ditampilkan sebagai badge info "Status: Processed / Unprocessed" yang read-only).
+   - Menggunakan kalkulasi kurs *realtime* dan pemilih tanggal (*backdate only*) serupa dengan `QuickTransactionDialog`.
+   - Tombol Simpan Perubahan yang men-trigger `TransactionHistoryUpdateRequested`.
+3. **`DeletedTransactionsScreen` (`screens/deleted_transactions_screen.dart`)**:
+   - Halaman daftar sederhana menampilkan log data yang dihapus (Waktu dihapus, Processed status, Nominal, Metode pembayaran, Catatan).
+   - Tampilan bersih dan jelas berlabel Read-Only.
+4. **Navigasi Dashboard**:
+   - Tambahkan menu/tombol pintasan menuju `TransactionHistoryScreen` dari `DashboardScreen` (misal di AppBar action atau drawer).
 
 ---
 
-## 7. Kriteria Penerimaan (Definition of Done)
+## 6. Panduan Langkah Pengerjaan (Step-by-Step Guide)
 
-- [ ] **Omnipresent Access**: Floating dialog dapat dimunculkan dari tombol trigger/FAB di antarmuka aplikasi.
-- [ ] **Auto-Hide**: Dialog otomatis tertutup jika pengguna mengetuk backdrop di luar kartu dialog atau menekan batal.
-- [ ] **Tipe Transaksi Opsional**: Inputan `type` dapat dikosongkan (tersimpan sebagai `NULL` di DB) atau diisi teks deskriptif bebas tanpa error validasi.
-- [ ] **Default Currency Otomatis**: Dropdown mata uang otomatis terisi dengan `base_currency` user yang sedang login.
-- [ ] **Kalkulasi Kurs Otomatis**: Kolom `amount_in_base_currency` bersifat read-only dan otomatis mengkalkulasi nominal dikalikan kurs saat amount atau currency berubah.
-- [ ] **Lookup Payment Method**: Pengguna dapat mencari dan memilih metode pembayaran aktif lewat modal popup lookup.
-- [ ] **Strict Backdate Only**: Date & Time picker tidak dapat memilih waktu di masa depan. Request dengan tanggal masa depan ditolak oleh backend.
-- [ ] **Penyimpanan Berhasil**: Data transaksi tersimpan di database dengan relasi user, mata uang, dan payment method yang tepat.
-- [ ] **Refleksi Dashboard**: Saldo atau rekapitulasi pada dashboard ter-update secara otomatis setelah transaksi baru selesai dicatat.
-- [ ] **Quality Checks**:
-  - Backend lolos validasi tanpa error.
-  - Frontend lolos static analysis (`flutter analyze`) tanpa issue baru.
+1. **Step 1: Backend Database Model**:
+   - Buka `backend/app/models/finance.py`.
+   - Tambahkan kolom `processed = Column(Boolean, default=False, nullable=False)` pada `Transaction`.
+   - Definisikan model `DeletedTransaction` (termasuk kolom `processed`).
+   - Update `backend/init_db.py` dan jalankan sinkronisasi database (`python reset_db.py ; python init_db.py`).
+2. **Step 2: Backend Schemas & Endpoints**:
+   - Buka `backend/app/schemas/finance.py`, tambahkan `TransactionUpdate`, update `TransactionResponse`, dan buat `DeletedTransactionResponse` (pastikan `processed` tidak ada di `TransactionUpdate`).
+   - Buka `backend/app/api/v1/finance.py`, implementasikan endpoint `GET /transactions`, `PUT /transactions/{id}`, `DELETE /transactions/{id}`, dan `GET /transactions/deleted`.
+3. **Step 3: Frontend Data & Domain Layer**:
+   - Update model `Transaction` dan tambahkan `DeletedTransaction` di `domain/models.dart`.
+   - Tambahkan method terkait transaksi di `data/finance_repository.dart`.
+4. **Step 4: Frontend BLoC Layer**:
+   - Buat `TransactionHistoryBloc`, `event`, dan `state`.
+5. **Step 5: Frontend UI Layer**:
+   - Buat `EditTransactionDialog`.
+   - Buat `DeletedTransactionsScreen`.
+   - Buat `TransactionHistoryScreen` dengan filter bar lengkap dan kolom `processed` berupa read-only Checkbox.
+   - Tambahkan navigasi menuju riwayat transaksi di `DashboardScreen`.
+6. **Step 6: Static Analysis & Testing**:
+   - Jalankan `flutter analyze` untuk memastikan kode frontend bebas error dan warning.
+   - Verifikasi endpoint dengan pengujian manual / curl.
+
+---
+
+## 7. Kriteria Penerimaan & Verifikasi (Acceptance Criteria)
+
+- [ ] **Kolom `processed`**:
+  - Kolom `processed` bertipe boolean dengan default `False`.
+  - Kolom `processed` **TIDAK BISA** diedit oleh user melalui UI maupun API `PUT /transactions/{id}`.
+  - Tampil di halaman Transaction History dalam bentuk **Checkbox** (read-only / disabled).
+- [ ] **Data Isolation**: User A tidak dapat melihat riwayat transaksi aktif maupun data transaksi terhapus milik User B.
+- [ ] **Filter Bekerja**:
+  - Filter rentang tanggal (Date Picker) menyaring transaksi sesuai tanggal yang dipilih.
+  - Filter catatan menyaring transaksi berdasarkan substring teks.
+  - Filter tipe menyaring transaksi berdasarkan tipe yang dipilih.
+  - Filter metode pembayaran hanya menampilkan transaksi dengan metode pembayaran terpilih.
+- [ ] **Edit Transaksi**:
+  - Transaksi berhasil diedit, nominal base currency dihitung ulang jika kurs/nominal berganti.
+  - `updated_at` terupdate ke timestamp saat edit dilakukan.
+  - Validasi backdate menolak tanggal di masa depan.
+  - Kolom `processed` tidak berubah saat transaksi diedit.
+- [ ] **Validasi Hapus (Delete Guard)**:
+  - Transaksi dengan `processed = TRUE` **DITOLAK** saat akan dihapus (backend merespons `HTTP 400 Bad Request` dengan pesan yang sesuai).
+  - Pada antarmuka pengguna (UI), tombol hapus pada baris transaksi yang bernilai `processed = TRUE` berada dalam kondisi dinonaktifkan (*disabled*).
+- [ ] **Hapus & Audit Log (untuk `processed = FALSE`)**:
+  - Menghapus transaksi memindahkannya ke tabel `deleted_transactions` beserta waktu hapus, user penghapus, dan status `processed = FALSE`.
+  - Transaksi hilang dari daftar `transactions` aktif.
+  - Halaman "View Deleted Transactions" menampilkan transaksi yang baru saja dihapus secara akurat.
+- [ ] **Kualitas Kode**:
+  - `flutter analyze` bersih (0 error).
+  - Tidak ada perubahan pada zona terlarang (`core/database.py`, `core/security.py`, `.env`).

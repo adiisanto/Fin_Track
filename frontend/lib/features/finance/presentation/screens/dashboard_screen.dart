@@ -11,6 +11,8 @@ import 'payment_method_management_screen.dart';
 import 'coa_management_screen.dart';
 import '../bloc/currency_bloc.dart';
 import '../widgets/quick_transaction_dialog.dart';
+import 'transaction_history_screen.dart';
+import '../bloc/transaction_history_bloc.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -74,6 +76,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const DrawerHeader(
               decoration: BoxDecoration(color: Colors.blue),
               child: Text('Menu Utama', style: TextStyle(color: Colors.white, fontSize: 24)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('Riwayat Transaksi'),
+              onTap: () {
+                Navigator.pop(context); // close drawer
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (ctx) => BlocProvider(
+                      create: (_) => TransactionHistoryBloc(
+                        repository: context.read<FinanceRepository>(),
+                      ),
+                      child: const TransactionHistoryScreen(),
+                    ),
+                  ),
+                );
+              },
             ),
             ListTile(
               leading: const Icon(Icons.payment),

@@ -80,7 +80,33 @@ class Transaction(Base):
     
     payment_method_id = Column(UUID(as_uuid=True), ForeignKey("payment_methods.id"), nullable=False)
     notes = Column(Text, nullable=True)
+    processed = Column(Boolean, default=False, nullable=False)
     
     transaction_date = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+class DeletedTransaction(Base):
+    __tablename__ = "deleted_transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    original_transaction_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    
+    type = Column(String(50), nullable=True)
+    currency_code = Column(String(3), ForeignKey("currencies.code"), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
+    exchange_rate = Column(Numeric(18, 6), nullable=False)
+    amount_in_base_currency = Column(Numeric(15, 2), nullable=False)
+    payment_method_id = Column(UUID(as_uuid=True), nullable=True)
+    payment_method_name = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    processed = Column(Boolean, default=False, nullable=False)
+    
+    transaction_date = Column(DateTime(timezone=True), nullable=False)
+    original_created_at = Column(DateTime(timezone=True), nullable=False)
+    original_updated_at = Column(DateTime(timezone=True), nullable=False)
+    
+    deleted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
