@@ -29,7 +29,7 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 | 4 | **Multi-Currency Management & Rates** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen mata uang oleh superadmin & konversi kurs otomatis |
 | 5 | **Payment Methods & GL Mapping** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen metode pembayaran user-scoped, copy template publik, relasi akun GL, & soft delete |
 | 6 | **Income Tracking (Catat Pemasukan)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Menggunakan Global Floating Dialog Input Transaction (#9) |
-| 7 | **Transaction History & Filter** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Halaman riwayat daftar transaksi dengan pagination & search |
+| 7 | **Transaction History & Filter** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Halaman riwayat daftar transaksi dengan pagination, filter, edit, soft delete & audit log |
 | 8 | **General Ledger (COA Management)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen COA mandiri per user, hierarki dimensi, copy template default saat registrasi |
 | 9 | **Budgeting / Target Anggaran** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Batasan pengeluaran per kategori / akun GL dalam periode tertentu |
 | 10| **Export & Financial Reports** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Unduh laporan laba/rugi, arus kas, ekspor CSV/PDF |
@@ -82,6 +82,13 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 - **Deskripsi**: Pencatatan penerimaan kas/pendapatan (gaji, investasi, dll) ke dalam sistem.
 - **Backend**: Endpoint `POST /api/v1/transactions` telah mendukung `INCOME`.
 - **Frontend**: Global Floating Dialog Input Transaction (#9, PR #10).
+- **Status Pengerjaan**: 🟢 Selesai
+- **Status Test**: ⚠️ Manual Verified
+
+### 7. Transaction History & Filter
+- **Deskripsi**: Halaman untuk melihat riwayat daftar transaksi lengkap dengan filter (rentang waktu, tipe, catatan, metode pembayaran). Mendukung fitur edit transaksi dan penghapusan transaksi dengan aturan ketat (tidak bisa menghapus transaksi yang sudah diproses) serta pencatatan ke audit log (deleted transactions).
+- **Backend**: Endpoint `GET /api/v1/transactions`, `PUT /api/v1/transactions/{id}`, `DELETE /api/v1/transactions/{id}`, dan `GET /api/v1/transactions/deleted`.
+- **Frontend**: Layar `TransactionHistoryScreen`, `EditTransactionDialog`, `DeletedTransactionsScreen`, dan `TransactionHistoryBloc`.
 - **Status Pengerjaan**: 🟢 Selesai
 - **Status Test**: ⚠️ Manual Verified
 
