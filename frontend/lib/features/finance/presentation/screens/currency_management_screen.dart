@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../bloc/currency_bloc.dart';
-import '../../domain/models.dart';
+import '../bloc/currency_state.dart';
 
 class CurrencyManagementScreen extends StatefulWidget {
   const CurrencyManagementScreen({Key? key}) : super(key: key);

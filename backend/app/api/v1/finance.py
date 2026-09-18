@@ -7,7 +7,7 @@ import calendar
 
 from app.api.deps import get_current_user, get_current_superadmin, get_db
 from app.models.user import User
-from app.models.finance import MST_Account, Currency, CurrencyRate, PaymentMethod, Transaction
+from app.models.finance import MST_Account, Currency, CurrencyRate, PaymentMethod, Transaction, DeletedTransaction
 from app.schemas.finance import (
     CurrencyCreate,
     CurrencyResponse,
@@ -17,7 +17,9 @@ from app.schemas.finance import (
     AccountLookupResponse,
     CurrencyRateResponse,
     TransactionCreate,
+    TransactionUpdate,
     TransactionResponse,
+    DeletedTransactionResponse,
     DashboardSummaryResponse
 )
 
@@ -484,6 +486,13 @@ async def create_transaction(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    # 0. Validate backdate
+    tx_date = trans_in.transaction_date or datetime.now(timezone.utc)
+    if tx_date.tzinfo is None:
+        tx_date = tx_date.replace(tzinfo=timezone.utc)
+    if tx_date > (datetime.now(timezone.utc) + timedelta(minutes=5)):
+        raise HTTPException(status_code=400, detail="Tanggal transaksi tidak boleh di masa depan (hanya backdate yang diizinkan)")
+
     # 1. Validate Currency
     curr_result = await db.execute(select(Currency).where(Currency.code == trans_in.currency_code))
     if not curr_result.scalar_one_or_none():
@@ -524,7 +533,7 @@ async def create_transaction(
         amount_in_base_currency=amount_in_base,
         payment_method_id=trans_in.payment_method_id,
         notes=trans_in.notes,
-        transaction_date=trans_in.transaction_date or datetime.now(timezone.utc)
+        transaction_date=tx_date
     )
     
     db.add(transaction)
@@ -551,6 +560,198 @@ async def create_transaction(
         }
     }
 
+@router.get("/transactions", response_model=dict)
+async def get_transactions(
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    type: Optional[str] = Query(None),
+    notes: Optional[str] = Query(None),
+    payment_method_id: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Transaction, PaymentMethod, MST_Account).join(
+        PaymentMethod, Transaction.payment_method_id == PaymentMethod.id
+    ).outerjoin(
+        MST_Account, and_(PaymentMethod.from_account == MST_Account.account, MST_Account.created_by == current_user.id)
+    ).where(Transaction.user_id == current_user.id)
+
+    if start_date:
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
+        query = query.where(Transaction.transaction_date >= start_date)
+    if end_date:
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        query = query.where(Transaction.transaction_date <= end_date)
+    if type:
+        query = query.where(func.lower(Transaction.type) == type.lower())
+    if notes:
+        query = query.where(Transaction.notes.ilike(f"%{notes}%"))
+    if payment_method_id:
+        query = query.where(Transaction.payment_method_id == payment_method_id)
+
+    query = query.order_by(Transaction.transaction_date.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    
+    data = []
+    for tx, pm, acc in result.all():
+        pm_resp = PaymentMethodResponse.model_validate(pm)
+        if acc:
+            pm_resp.account_description = acc.description
+        
+        tx_resp = TransactionResponse.model_validate(tx)
+        tx_resp.payment_method = pm_resp
+        data.append(tx_resp.model_dump())
+
+    return {"success": True, "data": data}
+
+@router.get("/transactions/deleted", response_model=dict)
+async def get_deleted_transactions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(DeletedTransaction).where(DeletedTransaction.user_id == current_user.id).order_by(DeletedTransaction.deleted_at.desc())
+    result = await db.execute(query)
+    data = [DeletedTransactionResponse.model_validate(dt).model_dump() for dt in result.scalars().all()]
+    return {"success": True, "data": data}
+
+@router.get("/transactions/{id}", response_model=dict)
+async def get_transaction(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Transaction, PaymentMethod, MST_Account).join(
+        PaymentMethod, Transaction.payment_method_id == PaymentMethod.id
+    ).outerjoin(
+        MST_Account, and_(PaymentMethod.from_account == MST_Account.account, MST_Account.created_by == current_user.id)
+    ).where(Transaction.id == id, Transaction.user_id == current_user.id)
+    
+    result = await db.execute(query)
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan.")
+    
+    tx, pm, acc = row
+    pm_resp = PaymentMethodResponse.model_validate(pm)
+    if acc:
+        pm_resp.account_description = acc.description
+        
+    tx_resp = TransactionResponse.model_validate(tx)
+    tx_resp.payment_method = pm_resp
+    return {"success": True, "data": tx_resp.model_dump()}
+
+@router.put("/transactions/{id}", response_model=dict)
+async def update_transaction(
+    id: str,
+    body: TransactionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Transaction).where(Transaction.id == id, Transaction.user_id == current_user.id)
+    result = await db.execute(query)
+    transaction = result.scalar_one_or_none()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan.")
+
+    if body.type is not None:
+        transaction.type = body.type
+    if body.notes is not None:
+        transaction.notes = body.notes
+    if body.transaction_date is not None:
+        tx_date = body.transaction_date
+        if tx_date.tzinfo is None:
+            tx_date = tx_date.replace(tzinfo=timezone.utc)
+        transaction.transaction_date = tx_date
+
+    if body.payment_method_id is not None and str(body.payment_method_id) != str(transaction.payment_method_id):
+        pm_query = select(PaymentMethod).where(PaymentMethod.id == body.payment_method_id)
+        pm_row = (await db.execute(pm_query)).scalar_one_or_none()
+        if not pm_row:
+            raise HTTPException(status_code=400, detail="Invalid payment_method_id")
+        transaction.payment_method_id = body.payment_method_id
+
+    if (body.currency_code is not None and body.currency_code != transaction.currency_code) or \
+       (body.amount is not None and body.amount != transaction.amount):
+        
+        curr_code = body.currency_code if body.currency_code is not None else transaction.currency_code
+        amt = body.amount if body.amount is not None else transaction.amount
+        
+        if curr_code != transaction.currency_code:
+            curr_result = await db.execute(select(Currency).where(Currency.code == curr_code))
+            if not curr_result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Invalid currency_code")
+
+        exchange_rate = 1.0
+        if curr_code != current_user.base_currency:
+            rate_query = select(CurrencyRate).where(
+                and_(
+                    CurrencyRate.from_currency == curr_code,
+                    CurrencyRate.to_currency == current_user.base_currency,
+                    CurrencyRate.valid_to.is_(None)
+                )
+            ).order_by(CurrencyRate.valid_from.desc()).limit(1)
+            rate_obj = (await db.execute(rate_query)).scalar_one_or_none()
+            if not rate_obj:
+                raise HTTPException(status_code=400, detail=f"No active exchange rate found from {curr_code} to {current_user.base_currency}")
+            exchange_rate = rate_obj.rate
+
+        transaction.currency_code = curr_code
+        transaction.amount = amt
+        transaction.exchange_rate = exchange_rate
+        transaction.amount_in_base_currency = amt * exchange_rate
+
+    transaction.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(transaction)
+
+    return await get_transaction(id=id, current_user=current_user, db=db)
+
+@router.delete("/transactions/{id}", response_model=dict)
+async def delete_transaction(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Transaction).where(Transaction.id == id, Transaction.user_id == current_user.id)
+    result = await db.execute(query)
+    transaction = result.scalar_one_or_none()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan.")
+
+    if transaction.processed:
+        raise HTTPException(status_code=400, detail="Transaksi yang sudah diproses tidak dapat dihapus.")
+
+    pm_query = select(PaymentMethod.name).where(PaymentMethod.id == transaction.payment_method_id)
+    pm_name = (await db.execute(pm_query)).scalar_one_or_none()
+
+    deleted_tx = DeletedTransaction(
+        original_transaction_id=transaction.id,
+        user_id=current_user.id,
+        type=transaction.type,
+        currency_code=transaction.currency_code,
+        amount=transaction.amount,
+        exchange_rate=transaction.exchange_rate,
+        amount_in_base_currency=transaction.amount_in_base_currency,
+        payment_method_id=transaction.payment_method_id,
+        payment_method_name=pm_name,
+        notes=transaction.notes,
+        processed=transaction.processed,
+        transaction_date=transaction.transaction_date,
+        original_created_at=transaction.created_at,
+        original_updated_at=transaction.updated_at,
+        deleted_at=datetime.now(timezone.utc),
+        deleted_by=current_user.id
+    )
+
+    db.add(deleted_tx)
+    await db.delete(transaction)
+    await db.commit()
+
+    return {"success": True, "message": "Transaksi berhasil dihapus dan dicatat di log."}
 
 from app.schemas.finance import AccountCreate, AccountUpdate, AccountResponse, AccountTypeEnum
 

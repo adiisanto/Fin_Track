@@ -28,7 +28,7 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 | 3 | **Expense Tracking (Catat Pengeluaran)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Form catat biaya, konversi kurs otomatis, binding GL account |
 | 4 | **Multi-Currency Management & Rates** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen mata uang oleh superadmin & konversi kurs otomatis |
 | 5 | **Payment Methods & GL Mapping** | Master/Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen metode pembayaran user-scoped, copy template publik, relasi akun GL, & soft delete |
-| 6 | **Income Tracking (Catat Pemasukan)** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Backend sudah siap menerima type `INCOME`, form UI di Flutter belum dibuat |
+| 6 | **Income Tracking (Catat Pemasukan)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Menggunakan Global Floating Dialog Input Transaction (#9) |
 | 7 | **Transaction History & Filter** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Halaman riwayat daftar transaksi dengan pagination & search |
 | 8 | **General Ledger (COA Management)** | Finance | 🟢 Selesai | ⚠️ Manual Verified | Manajemen COA mandiri per user, hierarki dimensi, copy template default saat registrasi |
 | 9 | **Budgeting / Target Anggaran** | Finance | ⚪ Belum Dimulai | ⏳ Belum Dites | Batasan pengeluaran per kategori / akun GL dalam periode tertentu |
@@ -73,20 +73,22 @@ Dokumen ini mencatat seluruh fitur yang ada, sedang dikerjakan, maupun yang dire
 - **Deskripsi**: Integrasi metode pembayaran dengan Buku Besar / Chart of Accounts (COA) dengan hierarki dimensi 1-4.
 - **Backend**: Model `PaymentMethod` terhubung FK ke `MST_Account.account`.
 - **Frontend**: Dropdown metode pembayaran menampilkan nama dan keterangan akun GL.
-- **Status Pengerjaan**: 🟡 Parsial (Struktur core GL & konsumsi di transaksi selesai; layar pengelolaan akun GL dan CRUD payment method belum dibuat).
+- **Status Pengerjaan**: 🟢 Selesai
+  - [x] Payment Method Management (#5, PR #6)
+  - [x] COA Management (#7, PR #8)
 - **Status Test**: ⚠️ Manual Verified
 
 ### 6. Income Tracking (Catat Pemasukan)
 - **Deskripsi**: Pencatatan penerimaan kas/pendapatan (gaji, investasi, dll) ke dalam sistem.
 - **Backend**: Endpoint `POST /api/v1/transactions` telah mendukung `INCOME`.
-- **Frontend**: Belum ada layar `AddIncomeScreen` atau tombol aksi pemasukan pada Dashboard.
-- **Status Pengerjaan**: ⚪ Belum Dimulai
-- **Status Test**: ⏳ Belum Dites
+- **Frontend**: Global Floating Dialog Input Transaction (#9, PR #10).
+- **Status Pengerjaan**: 🟢 Selesai
+- **Status Test**: ⚠️ Manual Verified
 
 ---
 
 ## 🎯 Rekomendasi Prioritas Pengerjaan Selanjutnya
 
-1. **Catat Pemasukan (Income Tracking)**: Melengkapi alur input transaksi agar metrik pemasukan di Dashboard dapat terisi secara riil.
-2. **Transaction History**: Memudahkan user meninjau dan menghapus/mengedit transaksi yang sudah diinput.
+1. **Transaction History & Filter**: Memudahkan user meninjau, mencari, memfilter, serta menghapus/mengedit transaksi yang sudah diinput.
+2. **Budgeting / Target Anggaran**: Membuat pembatasan/budget limit per kategori akun GL dalam periode tertentu.
 3. **Automated Unit Tests**: Menulis test suite pertama (`pytest` untuk backend dan `flutter test` untuk BLoC/Repository) agar status test beralih dari *Manual Verified* ke *Automated Pass*.

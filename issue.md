@@ -1,396 +1,379 @@
-# Issue: COA (Chart of Accounts) Management & Multi-Level Hierarchy (User-Scoped & Soft Delete)
+# Issue: Transaction History & Deleted Transactions Audit Log
 
-## 1. Ringkasan Fitur
-Fitur **COA (Chart of Accounts / Bagan Akun Buku Besar) Management** memungkinkan pengguna (*authenticated user*) untuk mengelola daftar akun akuntansi mereka sendiri secara mandiri (melihat, menambah, mengedit, dan me-soft delete akun). Setiap akun terisolasi per pengguna (*user-scoped*), sehingga perubahan atau penambahan akun oleh suatu pengguna **tidak akan mempengaruhi pengguna lain**.
+## 1. Ringkasan Fitur & Latar Belakang
+Fitur **Transaction History** adalah halaman yang memuat daftar lengkap riwayat transaksi keuangan yang telah diinput oleh pengguna (melalui fitur Input Transaksi). Selain melihat riwayat transaksi aktif, pengguna juga dapat melakukan penyaringan (*filtering*), pengubahan (*edit*), dan penghapusan (*delete*) transaksi.
 
-Fitur ini mencakup:
-1. **Akses Terproteksi**: Halaman COA Management hanya dapat diakses oleh user setelah berhasil login (*authenticated user*).
-2. **Operasi CRUD Lengkap dengan Soft Delete**:
-   - Pengguna dapat membuat (*Create*), melihat (*Read*), mengedit (*Update*), dan menghapus (*Delete*) akun.
-   - Penghapusan dilakukan secara **Soft Delete** (mengubah flag `active = FALSE`), data akun tidak pernah dihapus permanen dari database (*hard delete dilarang*).
-3. **Aturan Integritas Data Transaksi (Transaction Guard)**:
-   - **Proteksi Hapus**: Apabila sebuah akun sudah pernah digunakan dalam transaksi (misalnya terhubung ke metode pembayaran yang memiliki transaksi, atau transaksi jurnal langsung), akun tersebut **TIDAK DAPAT dihapus / di-soft delete** sebelum data transaksi yang bersangkutan dihapus terlebih dahulu.
-   - **Proteksi Kode Akun & Tipe**: Sama seperti aturan hapus, nilai `account` (kode akun) dan `type` (Debit/Credit) **TIDAK DAPAT diubah** jika akun tersebut sudah memiliki riwayat transaksi. Hanya `description`, `dimensi1` s/d `dimensi4`, dan status `active` (jika tidak ada transaksi) yang diizinkan untuk diedit.
-4. **Struktur Data Akun**:
-   - `account`: Kode akun (string, misal: `1001`, `1101.01`), wajib diisi, unik per pengguna.
-   - `description`: Nama/keterangan akun (misal: `Kas Utama`, `Bank Mandiri`, `Beban Sewa`), wajib diisi.
-   - `type`: Tipe saldo normal akun, bernilai Enum `Debit` atau `Credit`.
-   - `dimensi1` s/d `dimensi4`: Opsional (*nullable*), mereferensi ke `account` milik pengguna yang sama. Digunakan untuk pengelompokan hierarki akun hingga **4 tingkat/level** (Level 1 s/d Level 4).
-   - **Popup Lookup Modal untuk Dimensi**: Tersedia dialog popup interaktif untuk memilih nilai `dimensi1` hingga `dimensi4` dengan fitur pencarian/filter berdasarkan kode akun maupun deskripsi akun.
-   - `active`: Checkbox status aktif akun (Default: `ACTIVE` / `True`).
-   - `created_at`: Timestamp UTC saat akun pertama kali dibuat (Otomatis dibuat oleh sistem, *read-only*, tidak dapat diubah).
-   - `created_by`: User ID pembuat akun (Otomatis terisi dari user yang sedang login, *read-only*, tidak dapat diubah).
-5. **Template Bawaan Otomatis Saat Registrasi (Default COA Template)**:
-   - Ketika pengguna baru menyelesaikan proses registrasi (`POST /api/v1/auth/register`), sistem secara otomatis menyalin (*copy/seed*) paket template akun COA standar (seperti Kas, Bank, Piutang, Hutang, Ekuitas, Pendapatan, dan Beban Operasional) ke dalam akun pengguna tersebut dengan `created_by = user.id`.
+Untuk kebutuhan audit dan keamanan data finansial, setiap transaksi yang dihapus tidak langsung hilang permanen begitu saja, melainkan dipindahkan/disimpan ke dalam tabel log khusus yaitu **`deleted_transactions`**. Pengguna dapat melihat daftar transaksi yang pernah mereka hapus melalui halaman **View Deleted Transactions**.
+
+Selain itu, setiap transaksi memiliki status **`processed`** (tipe data Boolean dengan nilai default `FALSE`). Kolom ini bersifat **read-only bagi user (tidak dapat diedit)** dan wajib ditampilkan pada halaman riwayat transaksi dalam bentuk **checkbox**.
+
+### 🔑 Aturan Utama & Hak Akses (Multi-Tenancy Isolation):
+1. **Autentikasi Wajib**: Halaman ini hanya dapat diakses oleh user yang telah login (`get_current_user`).
+2. **Isolasi Data Antar Pengguna**: User A **TIDAK BISA** melihat, mengedit, menghapus, atau mengakses riwayat transaksi maupun log transaksi terhapus milik User B (`user_id == current_user.id`).
+3. **Kolom `processed`**:
+   - Kolom berjenis `Boolean` dengan nilai bawaan `FALSE`.
+   - Bersifat **sistemik / read-only bagi user** (pengguna dilarang mengubah status ini secara manual melalui form/modal edit).
+   - Ditampilkan pada tabel / list transaksi dalam bentuk **Checkbox** (non-interactive / read-only).
+4. **Validasi Hapus (Delete Guard)**:
+   - Transaksi dengan status **`processed = TRUE` TIDAK DAPAT DIHAPUS** oleh user.
+   - Usaha penghapusan transaksi terproses wajib digagalkan oleh backend dengan pesan error penolakan.
+5. **Audit Trail Log**: 
+   - Setiap operasi edit transaksi wajib memperbarui kolom `updated_at` dengan timestamp terkini (UTC).
+   - Setiap operasi hapus transaksi (yang berstatus `processed = FALSE`) wajib menyalin data transaksi ke tabel `deleted_transactions` beserta informasi waktu penghapusan (`deleted_at`) dan identitas user yang menghapus (`deleted_by`), sebelum data transaksi dihapus dari tabel `transactions`.
 
 ---
 
-## 2. Perubahan Skema Database (Database & Models)
+## 2. Kebutuhan Fungsional & Logika Bisnis
 
-### A. Model `MST_Account` (`backend/app/models/finance.py`)
-Tabel `mst_account` harus disesuaikan agar mendukung kepemilikan per pengguna (*user-scoped*), multi-level grouping (`dimensi1` s/d `dimensi4`), dan integrasi relasional yang aman:
+### A. Fitur Filter pada Halaman Transaction History
+Halaman riwayat transaksi wajib menyediakan filter dinamis dengan tombol *Reset Filter* dan *Apply Filter*:
+1. **Filter by `transaction_date` (Rentang Tanggal)**:
+   - Disediakan dalam bentuk **Date Picker** (atau *Date Range Picker*: `start_date` dan `end_date`).
+   - Menyaring transaksi berdasarkan rentang tanggal terjadinya transaksi.
+2. **Filter by `type` (Tipe Transaksi)**:
+   - Input/Dropdown pemilih tipe transaksi dengan opsi lookup ke master/daftar tipe yang pernah digunakan atau enum (misal: `EXPENSE`, `INCOME`, atau custom type). Menyediakan opsi "Semua Tipe".
+3. **Filter by `notes` (Catatan)**:
+   - Input teks pencarian (*search field*) yang melakukan pencarian substring (case-insensitive) pada catatan transaksi.
+4. **Filter by `payment_method` (Metode Pembayaran)**:
+   - Tombol/Input lookup value yang membuka popup modal daftar metode pembayaran aktif milik user (`PaymentMethodLookupDialog`), memungkinkan user memilih metode pembayaran spesifik untuk memfilter transaksi.
 
-#### Kolom & Tipe Data:
-| Kolom | Tipe Data | Nullable | Default | Keterangan |
-| :--- | :--- | :---: | :---: | :--- |
-| `id` | `UUID` | No | `uuid.uuid4` | Primary Key unik baris data |
-| `account` | `VARCHAR(20)` | No | - | Kode akun bisnis (misal: `1001`, `1.1.01`) |
-| `description` | `VARCHAR(255)`| No | - | Keterangan / nama akun |
-| `type` | `VARCHAR(10)` | No | - | Enum nilai: `'Debit'` atau `'Credit'` |
-| `dimensi1` | `VARCHAR(20)` | **Yes** | `None` | Referensi ke kode akun induk Level 1 (milik user yang sama) |
-| `dimensi2` | `VARCHAR(20)` | **Yes** | `None` | Referensi ke kode akun induk Level 2 (milik user yang sama) |
-| `dimensi3` | `VARCHAR(20)` | **Yes** | `None` | Referensi ke kode akun induk Level 3 (milik user yang sama) |
-| `dimensi4` | `VARCHAR(20)` | **Yes** | `None` | Referensi ke kode akun induk Level 4 (milik user yang sama) |
-| `active` | `BOOLEAN` | No | `True` | Status aktif akun. Jika `False`, akun berstatus soft-deleted |
-| `created_at` | `TIMESTAMP WITH TIME ZONE` | No | `func.now()` | Timestamp UTC saat akun dibuat (Immutable) |
-| `created_by` | `UUID` | **Yes** | `None` | FK ke `users.id` (ON DELETE CASCADE). `NULL` hanya untuk template sistem global |
+### B. Tampilan Tabel & Kolom `processed`
+- Setiap baris transaksi di halaman Transaction History menampilkan kolom:
+  - **Processed**: Komponen **`Checkbox`** (bersifat read-only / `onChanged: null`) yang merefleksikan nilai `processed` (centang jika `True`, tidak tercentang jika `False`).
+  - **Tanggal Transaksi (`transaction_date`)**
+  - **Tipe Transaksi (`type`)**
+  - **Nominal & Mata Uang (`amount` & `currency_code`)**
+  - **Nominal Base Currency (`amount_in_base_currency`)**
+  - **Metode Pembayaran (`payment_method`)**
+  - **Catatan (`notes`)**
+  - **Aksi**: Tombol Edit & Hapus (tombol Hapus di-disable jika `processed == True`).
 
-#### Constraints & Indexes:
-1. **Composite Unique Constraint**:
-   - `UniqueConstraint('created_by', 'account', name='uq_user_coa_account')`
-   - *Tujuan*: Memastikan kode akun unik untuk masing-masing user, namun memungkinkan User A dan User B memiliki kode akun yang sama (misal sama-sama memiliki `1001`).
-2. **Index**:
-   - Index pada `created_by` untuk optimasi filter akun pengguna aktif.
-   - Index pada `account`.
+### C. Fitur Aksi Transaksi (Edit & Hapus)
+1. **Edit Transaksi**:
+   - Tombol aksi di setiap baris/kartu transaksi untuk memunculkan dialog/modal edit (`EditTransactionDialog`).
+   - Field yang dapat diubah: `type`, `amount`, `currency_code`, `payment_method_id`, `notes`, dan `transaction_date`.
+   - **PROTEKSI FIELD**: Kolom `processed` **TIDAK BOLEH** dapat diedit oleh user pada form ini.
+   - **Kalkulasi Kurs Otomatis**: Jika `amount` atau `currency_code` diubah, `amount_in_base_currency` wajib dikalkulasi ulang secara realtime menggunakan exchange rate terkini.
+   - **Validasi Backdate**: `transaction_date` tetap tunduk pada aturan validasi ketat: **hanya boleh backdate** (tidak boleh tanggal masa depan / *future date*).
+   - **Pembaruan Timestamp**: Kolom `updated_at` otomatis terupdate ke timestamp saat perubahan disimpan.
+2. **Hapus Transaksi (dengan Validasi `processed = TRUE`)**:
+   - **PENTING - Delete Guard**:
+     - Sistem wajib mengecek nilai `processed` sebelum memproses penghapusan.
+     - Jika transaksi bernilai **`processed = TRUE`**, sistem **DILARANG MENGHAPUS** transaksi dan wajib mengembalikan pesan kesalahan (*HTTP 400 Bad Request*): `"Transaksi yang sudah diproses tidak dapat dihapus."`.
+   - Jika `processed = FALSE`:
+     - Tampilkan konfirmasi pop-up (*Confirmation Dialog*): "Apakah Anda yakin ingin menghapus transaksi ini? Data yang dihapus akan dipindahkan ke riwayat transaksi terhapus."
+     - Saat dikonfirmasi:
+       - Sistem membuat *record* baru di tabel `deleted_transactions` yang menampung seluruh *snapshot* data transaksi terkait (termasuk status `processed = FALSE`), `deleted_at = now(utc)`, dan `deleted_by = current_user.id`.
+       - Sistem menghapus *record* transaksi tersebut dari tabel `transactions`.
+       - Menampilkan notifikasi sukses dan memperbarui tabel riwayat transaksi secara otomatis.
 
-### B. Relasi Antar Tabel & Dependensi Transaksi:
-- Tabel `payment_methods`:
-  - Kolom `from_account`: Menyimpan string kode akun (`VARCHAR(20)`).
-  - Pengecekan transaksi terkait:
-    ```sql
-    SELECT COUNT(*) FROM transactions t
-    JOIN payment_methods pm ON t.payment_method_id = pm.id
-    WHERE pm.from_account = :account_code AND pm.user_id = :user_id;
-    ```
-- Jika count > 0, akun dianggap **sudah digunakan dalam transaksi**, sehingga proteksi hapus dan proteksi perubahan kode/tipe wajib aktif.
-
-### C. Pembaruan Seed Data Template (`backend/init_db.py`)
-- Sediakan daftar akun template default sistem (dengan `created_by = None` atau fungsi seed) yang mencakup struktur 4 level dimensi standar, contohnya:
-  - `1000` - ASET LANCAR (`Debit`)
-  - `1100` - Kas & Bank (`Debit`, `dimensi1="1000"`)
-  - `1001` - Kas Utama (`Debit`, `dimensi1="1000"`, `dimensi2="1100"`)
-  - `1002` - Bank Operasional (`Debit`, `dimensi1="1000"`, `dimensi2="1100"`)
-  - `1003` - Saldo E-Wallet (`Debit`, `dimensi1="1000"`, `dimensi2="1100"`)
-  - `2000` - KEWAJIBAN (`Credit`)
-  - `2100` - Hutang Jangka Pendek (`Credit`, `dimensi1="2000"`)
-  - `2001` - Hutang Kartu Kredit (`Credit`, `dimensi1="2000"`, `dimensi2="2100"`)
-  - `3000` - EKUITAS / MODAL (`Credit`)
-  - `4000` - PENDAPATAN (`Credit`)
-  - `4101` - Pendapatan Gaji (`Credit`, `dimensi1="4000"`)
-  - `5000` - BEBAN OPERASIONAL (`Debit`)
-  - `5101` - Beban Makan & Minum (`Debit`, `dimensi1="5000"`)
+### D. Halaman View Deleted Transactions
+- Halaman/layar khusus (atau sub-view/modal) yang dapat diakses melalui tombol navigasi di halaman Transaction History (misal: tombol "Riwayat Terhapus" / "Trash Log").
+- Menampilkan daftar transaksi yang telah dihapus milik pengguna saat ini.
+- Bersifat **Read-Only** (hanya untuk melihat informasi historis transaksi yang pernah dihapus).
+- Menampilkan kolom: ID transaksi asli, Status Processed (Checkbox/Label), Tipe, Nominal, Mata Uang, Nilai dalam Base Currency, Metode Pembayaran, Catatan, Tanggal Transaksi, dan Waktu Dihapus (`deleted_at`).
 
 ---
 
-## 3. Desain Backend API (FastAPI)
+## 3. Perubahan Skema Database (Database & Models)
 
-Semua endpoint di bawah ini wajib dilindungi (*Protected*) menggunakan dependency `current_user: User = Depends(get_current_user)`.
+### A. Perbarui Model `Transaction` (`backend/app/models/finance.py`)
+Tambahkan kolom `processed` pada model `Transaction`:
+```python
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    # ... kolom eksisting ...
+    processed = Column(Boolean, default=False, nullable=False)
+```
+
+### B. Tambah Model `DeletedTransaction` (`backend/app/models/finance.py`)
+Tambahkan model tabel `deleted_transactions` ke dalam `backend/app/models/finance.py`:
+
+```python
+class DeletedTransaction(Base):
+    __tablename__ = "deleted_transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    original_transaction_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    
+    type = Column(String(50), nullable=True)
+    currency_code = Column(String(3), ForeignKey("currencies.code"), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
+    exchange_rate = Column(Numeric(18, 6), nullable=False)
+    amount_in_base_currency = Column(Numeric(15, 2), nullable=False)
+    payment_method_id = Column(UUID(as_uuid=True), nullable=True) # Dapat nullable jika metode pembayaran aslinya terhapus
+    payment_method_name = Column(String(100), nullable=True) # Snapshot nama metode pembayaran
+    notes = Column(Text, nullable=True)
+    processed = Column(Boolean, default=False, nullable=False) # Snapshot status processed saat dihapus
+    
+    transaction_date = Column(DateTime(timezone=True), nullable=False)
+    original_created_at = Column(DateTime(timezone=True), nullable=False)
+    original_updated_at = Column(DateTime(timezone=True), nullable=False)
+    
+    deleted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+```
+
+### C. Sinkronisasi Skrip Database
+- Pastikan model `DeletedTransaction` terdaftar di `backend/init_db.py` dan `reset_db.py` sehingga tabel terbuat saat sinkronisasi ulang database (`python reset_db.py ; python init_db.py`).
+
+---
+
+## 4. Desain Backend API (FastAPI)
 
 ### A. Pydantic Schemas (`backend/app/schemas/finance.py`)
 
+Tambahkan/perbarui skema untuk Update, Response, dan Filter:
+
 ```python
-class AccountTypeEnum(str, Enum):
-    DEBIT = "Debit"
-    CREDIT = "Credit"
+from datetime import datetime, timezone, timedelta
+from decimal import Decimal
+from typing import Optional, List
+from uuid import UUID
+from pydantic import BaseModel, Field, field_validator
 
-class AccountCreate(BaseModel):
-    account: str = Field(..., min_length=1, max_length=20, description="Kode Akun")
-    description: str = Field(..., min_length=1, max_length=255, description="Deskripsi Akun")
-    type: AccountTypeEnum
-    dimensi1: Optional[str] = Field(None, max_length=20)
-    dimensi2: Optional[str] = Field(None, max_length=20)
-    dimensi3: Optional[str] = Field(None, max_length=20)
-    dimensi4: Optional[str] = Field(None, max_length=20)
-    active: bool = True
+class TransactionCreate(BaseModel):
+    type: Optional[str] = Field(None, max_length=50)
+    currency_code: str = Field(..., min_length=3, max_length=3)
+    amount: Decimal = Field(..., gt=0)
+    payment_method_id: UUID
+    notes: Optional[str] = None
+    transaction_date: Optional[datetime] = None
+    # Catatan: 'processed' TIDAK dimasukkan ke TransactionCreate, default server adalah False
 
-class AccountUpdate(BaseModel):
-    account: Optional[str] = Field(None, min_length=1, max_length=20)
-    description: Optional[str] = Field(None, min_length=1, max_length=255)
-    type: Optional[AccountTypeEnum] = None
-    dimensi1: Optional[str] = Field(None, max_length=20)
-    dimensi2: Optional[str] = Field(None, max_length=20)
-    dimensi3: Optional[str] = Field(None, max_length=20)
-    dimensi4: Optional[str] = Field(None, max_length=20)
-    active: Optional[bool] = None
+class TransactionUpdate(BaseModel):
+    type: Optional[str] = Field(None, max_length=50)
+    currency_code: Optional[str] = Field(None, min_length=3, max_length=3)
+    amount: Optional[Decimal] = Field(None, gt=0)
+    payment_method_id: Optional[UUID] = None
+    notes: Optional[str] = None
+    transaction_date: Optional[datetime] = None
+    # PENTING: 'processed' TIDAK boleh dimasukkan ke TransactionUpdate karena tidak dapat diedit oleh user
 
-class AccountResponse(BaseModel):
+    @field_validator("transaction_date")
+    @classmethod
+    def validate_backdate_only(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is not None:
+            now_utc = datetime.now(timezone.utc)
+            target_dt = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+            if target_dt > (now_utc + timedelta(minutes=5)):
+                raise ValueError("Tanggal transaksi tidak boleh di masa depan (hanya backdate yang diizinkan).")
+        return v
+
+class TransactionResponse(BaseModel):
     id: UUID
-    account: str
-    description: str
-    type: str
-    dimensi1: Optional[str] = None
-    dimensi2: Optional[str] = None
-    dimensi3: Optional[str] = None
-    dimensi4: Optional[str] = None
-    active: bool
+    type: Optional[str] = None
+    currency_code: str
+    amount: Decimal
+    exchange_rate: Decimal
+    amount_in_base_currency: Decimal
+    payment_method: PaymentMethodResponse
+    notes: Optional[str]
+    processed: bool = False # Field status processed
+    transaction_date: datetime
     created_at: datetime
-    created_by: Optional[UUID] = None
-    has_transactions: bool = False
+    updated_at: datetime
 
     class Config:
         from_attributes = True
 
-class AccountLookupResponse(BaseModel):
-    account: str
-    description: str
-    type: str
-    active: bool
+class DeletedTransactionResponse(BaseModel):
+    id: UUID
+    original_transaction_id: UUID
+    user_id: UUID
+    type: Optional[str]
+    currency_code: str
+    amount: Decimal
+    exchange_rate: Decimal
+    amount_in_base_currency: Decimal
+    payment_method_id: Optional[UUID]
+    payment_method_name: Optional[str]
+    notes: Optional[str]
+    processed: bool = False
+    transaction_date: datetime
+    original_created_at: datetime
+    original_updated_at: datetime
+    deleted_at: datetime
 
     class Config:
         from_attributes = True
 ```
 
----
+### B. REST API Endpoints (`backend/app/api/v1/finance.py`)
 
-### B. Endpoint API (`backend/app/api/v1/finance.py`)
+Implementasikan endpoint-endpoint berikut dengan proteksi `current_user: User = Depends(get_current_user)`:
 
-#### 1. `GET /api/v1/coa`
-- **Tujuan**: Mengambil daftar COA milik pengguna yang sedang login.
+#### 1. `GET /api/v1/transactions`
+- **Tujuan**: Mengambil daftar transaksi aktif milik pengguna yang sedang login dengan dukungan filtering.
 - **Query Parameters**:
-  - `include_inactive`: `bool` (default: `False`). Jika `False`, hanya tampilkan `active == True`.
-  - `search`: `Optional[str]` (pencarian teks pada `account` atau `description`).
-  - `type`: `Optional[str]` (`Debit` atau `Credit`).
-- **Response**: `200 OK`
-  ```json
-  {
-    "success": true,
-    "data": [
-      {
-        "id": "c1f7a4a2-...",
-        "account": "1001",
-        "description": "Kas Utama",
-        "type": "Debit",
-        "dimensi1": "1000",
-        "dimensi2": "1100",
-        "dimensi3": null,
-        "dimensi4": null,
-        "active": true,
-        "created_at": "2026-09-17T12:00:00Z",
-        "created_by": "94e3a905-...",
-        "has_transactions": true
-      }
-    ]
-  }
-  ```
+  - `start_date` (Optional[datetime]): Filter tanggal awal transaksi (`transaction_date >= start_date`).
+  - `end_date` (Optional[datetime]): Filter tanggal akhir transaksi (`transaction_date <= end_date`).
+  - `type` (Optional[str]): Filter exact/case-insensitive match tipe transaksi.
+  - `notes` (Optional[str]): Filter substring pencarian pada `notes` (`notes ILIKE '%notes%'`).
+  - `payment_method_id` (Optional[UUID]): Filter berdasarkan ID metode pembayaran.
+  - `skip` (int = 0, ge=0) dan `limit` (int = 50, le=100) untuk pagination.
+- **Query Constraints**: Wajib menyertakan filter `Transaction.user_id == current_user.id`, diurutkan berdasarkan `Transaction.transaction_date.desc()`.
+- **Response**: List of `TransactionResponse` (atau dictionary berisikan data transaksi lengkap dengan field `processed`).
 
-#### 2. `POST /api/v1/coa`
-- **Tujuan**: Membuat akun baru untuk pengguna aktif.
-- **Validasi Bisnis**:
-  - Kode `account` harus unik untuk `current_user.id`. Jika sudah digunakan, kembalikan HTTP `409 Conflict` (*"Kode akun sudah terdaftar."*).
-  - Nilai `dimensi1` s/d `dimensi4` tidak boleh sama dengan `account` akun itu sendiri (*mencegah circular reference langsung*).
-  - Jika dimensi diisi, pastikan akun dimensi tersebut ada di daftar akun milik user aktif.
-  - Set `created_by = current_user.id` dan `created_at = datetime.now(timezone.utc)`.
-- **Response**: `201 Created`
+#### 2. `GET /api/v1/transactions/{id}`
+- **Tujuan**: Mengambil detail satu transaksi aktif.
+- **Validasi**: Pastikan `transaction.user_id == current_user.id`, jika tidak ditemukan kembalikan HTTP 404.
 
-#### 3. `PUT /api/v1/coa/{id}`
-- **Tujuan**: Mengubah konfigurasi akun.
-- **Validasi Proteksi Transaksi**:
-  1. Ambil data akun berdasarkan `id` dan pastikan `created_by == current_user.id`. Jika tidak ditemukan, kembalikan HTTP `404`.
-  2. Periksa apakah akun ini telah digunakan dalam transaksi:
-     - Jika **sudah ada transaksi**:
-       - Cek apakah payload mencoba mengubah `account` atau `type`.
-       - Jika nilai `account` atau `type` berbeda dari data saat ini, **TOLAK** dengan HTTP `400 Bad Request`:
-         > *"Kode akun dan tipe akun (Debit/Credit) tidak dapat diubah karena akun ini sudah memiliki riwayat transaksi."*
-       - Perubahan pada `description` dan `dimensi1..4` tetap diizinkan.
-  3. Jika **belum ada transaksi**:
-     - Pengguna bebas mengubah `account`, `description`, `type`, `dimensi1..4`, maupun `active`.
-     - Jika kode `account` diubah, lakukan validasi duplikasi untuk memastikan kode baru belum dipakai akun lain milik user.
-- **Response**: `200 OK`
+#### 3. `PUT /api/v1/transactions/{id}`
+- **Tujuan**: Memperbarui transaksi yang ada.
+- **Body**: `TransactionUpdate`
+- **Logika**:
+  - Cek keberadaan transaksi dan pastikan `transaction.user_id == current_user.id`.
+  - Jika `currency_code` atau `amount` berubah, lakukan validasi currency dan hitung ulang `exchange_rate` serta `amount_in_base_currency`.
+  - Jika `payment_method_id` berubah, validasi metode pembayaran milik user.
+  - Jika `transaction_date` diubah, jalankan validasi backdate.
+  - Kolom `processed` **TIDAK DIUBAH** (tetap mempertahankan nilai yang ada).
+  - Update `updated_at = datetime.now(timezone.utc)`.
+  - Commit ke database dan kembalikan transaksi yang telah diperbarui.
 
-#### 4. `DELETE /api/v1/coa/{id}` (Soft Delete)
-- **Tujuan**: Menonaktifkan akun (*Soft Delete*).
-- **Validasi Proteksi Transaksi**:
-  1. Ambil data akun berdasarkan `id` dan pastikan `created_by == current_user.id`. Jika tidak ada, kembalikan HTTP `404`.
-  2. Periksa apakah akun memiliki riwayat transaksi:
-     - Jika **ada transaksi**, **TOLAK** dengan HTTP `400 Bad Request`:
-       > *"Akun tidak dapat dinonaktifkan atau dihapus karena sudah terdapat transaksi yang menggunakan akun ini. Hapus data transaksi terkait terlebih dahulu."*
-  3. Jika **tidak ada transaksi**:
-     - Lakukan soft delete: set `active = False`.
-     - Simpan perubahan ke database.
-- **Response**: `200 OK`
-  ```json
-  {
-    "success": true,
-    "message": "Akun berhasil dinonaktifkan (soft deleted)."
-  }
-  ```
+#### 4. `DELETE /api/v1/transactions/{id}`
+- **Tujuan**: Menghapus transaksi dan memindahkannya ke tabel `deleted_transactions`.
+- **Logika**:
+  - Cek transaksi dan pastikan `transaction.user_id == current_user.id` (jika tidak ditemukan return 404).
+  - **VALIDASI DELETE GUARD**:
+    - Periksa apakah `transaction.processed == True`.
+    - Jika `transaction.processed == True`: Batalkan operasi dan lempar `HTTPException(status_code=400, detail="Transaksi yang sudah diproses tidak dapat dihapus.")`.
+  - Jika `transaction.processed == False`:
+    - Ambil data nama payment method (jika ada) untuk snapshot.
+    - Buat objek `DeletedTransaction`:
+      - Salin seluruh field dari `Transaction` (termasuk `processed = False`).
+      - `original_transaction_id = transaction.id`
+      - `original_created_at = transaction.created_at`
+      - `original_updated_at = transaction.updated_at`
+      - `deleted_at = datetime.now(timezone.utc)`
+      - `deleted_by = current_user.id`
+    - `db.add(deleted_tx)`
+    - `await db.delete(transaction)`
+    - `await db.commit()`
+    - Kembalikan pesan sukses: `{"success": True, "message": "Transaksi berhasil dihapus dan dicatat di log."}`.
 
-#### 5. `GET /api/v1/coa/lookup`
-- **Tujuan**: Menyediakan data pencarian untuk modal dialog lookup (digunakan saat memilih `dimensi1` s/d `dimensi4` maupun saat pemilihan akun pada form Payment Method).
-- **Query Parameters**:
-  - `q`: `Optional[str]` (kata kunci pencarian kode atau deskripsi).
-  - `exclude_account`: `Optional[str]` (opsional: kode akun yang sedang diedit agar tidak muncul sebagai opsi dimensi untuk mencegah referensi ke diri sendiri).
-- **Filter**: Hanya mengembalikan akun milik `current_user.id` yang berstatus `active == True`.
-- **Response**: `200 OK`
+#### 5. `GET /api/v1/transactions/deleted`
+- **Tujuan**: Mengambil daftar riwayat transaksi yang dihapus milik user yang sedang login.
+- **Query Constraints**: `DeletedTransaction.user_id == current_user.id`, diurutkan `deleted_at.desc()`.
+- **Response**: List of `DeletedTransactionResponse`.
 
 ---
 
-### C. Registration Hook: Copy Template Default (`backend/app/api/v1/auth.py`)
-Pada endpoint registrasi pengguna baru:
-1. Setelah entitas `db_user` berhasil di-commit ke database, panggil helper function:
-   ```python
-   await seed_default_user_coa(db: AsyncSession, user_id: UUID)
-   ```
-2. Fungsi ini menduplikasi daftar akun template standar ke tabel `mst_account` dengan `created_by = user_id`, `active = True`, dan mempertahankan struktur hierarki `dimensi1..4`.
-3. Setelah registrasi selesai, user baru langsung memiliki bagan akun COA lengkap siap pakai tanpa harus membuat dari nol.
+## 5. Desain Frontend Flutter
+
+### A. Model (`frontend/lib/features/finance/domain/models.dart`)
+- Perbarui model `Transaction`:
+  - Tambahkan field `final bool processed;` (default `false`).
+  - Tambahkan field `final DateTime? updatedAt;`.
+  - Update method `fromJson` dan `toJson`.
+- Tambahkan model `DeletedTransaction` (termasuk `final bool processed;`) dengan parser `fromJson` dan `toJson`.
+
+### B. Repository (`frontend/lib/features/finance/data/finance_repository.dart`)
+Tambahkan method API berikut:
+- `Future<List<Transaction>> getTransactions({DateTime? startDate, DateTime? endDate, String? type, String? notes, String? paymentMethodId})`
+- `Future<Transaction> updateTransaction(String id, {String? type, String? currencyCode, double? amount, String? paymentMethodId, String? notes, DateTime? transactionDate})`
+- `Future<void> deleteTransaction(String id)`
+- `Future<List<DeletedTransaction>> getDeletedTransactions()`
+
+### C. State Management BLoC (`frontend/lib/features/finance/presentation/bloc/`)
+Buat `TransactionHistoryBloc`:
+- **Events**:
+  - `TransactionHistoryFetchRequested({filters...})`
+  - `TransactionHistoryDeleteRequested(String id)`
+  - `TransactionHistoryUpdateRequested(...)`
+  - `DeletedTransactionsFetchRequested()`
+- **States**:
+  - `TransactionHistoryLoading`
+  - `TransactionHistoryLoaded(List<Transaction> transactions, ActiveFilters filters)`
+  - `DeletedTransactionsLoaded(List<DeletedTransaction> deletedTransactions)`
+  - `TransactionHistoryOperationSuccess(String message)`
+  - `TransactionHistoryError(String message)`
+
+### D. Screens & UI Components
+1. **`TransactionHistoryScreen` (`screens/transaction_history_screen.dart`)**:
+   - **Header & Action Bar**:
+     - Judul "Riwayat Transaksi".
+     - Tombol "Lihat Transaksi Terhapus" (ikon `Icons.delete_outline` / `Icons.history`).
+   - **Filter Panel / Bar**:
+     - Input Date Range Picker (Tombol pilih tanggal mulai & selesai).
+     - Dropdown / Text pemilih `type`.
+     - TextField pencarian `notes`.
+     - Tombol lookup pemilih `Payment Method` (memanggil `PaymentMethodLookupDialog`).
+     - Tombol "Terapkan Filter" dan "Reset".
+   - **Tabel / Daftar Kartu Transaksi**:
+     - Kolom tabel:
+       - **Processed**: `Checkbox(value: tx.processed, onChanged: null)` (read-only checkbox).
+       - **Tanggal**: Format `yyyy-MM-dd HH:mm`.
+       - **Tipe**: Label teks / badge.
+       - **Catatan**: Substring / multiline singkat.
+       - **Metode Pembayaran**: Nama metode pembayaran.
+       - **Nominal**: Format currency beserta konversi base currency.
+       - **Aksi**: Tombol Edit (pensil) dan Tombol Hapus (tempat sampah, *disabled* / diberi tooltip jika `tx.processed == true`).
+2. **`EditTransactionDialog` (`widgets/edit_transaction_dialog.dart`)**:
+   - Dialog form yang terisi (*pre-filled*) dengan data transaksi terpilih.
+   - Kolom `processed` **TIDAK BISA** diedit (bisa ditampilkan sebagai badge info "Status: Processed / Unprocessed" yang read-only).
+   - Menggunakan kalkulasi kurs *realtime* dan pemilih tanggal (*backdate only*) serupa dengan `QuickTransactionDialog`.
+   - Tombol Simpan Perubahan yang men-trigger `TransactionHistoryUpdateRequested`.
+3. **`DeletedTransactionsScreen` (`screens/deleted_transactions_screen.dart`)**:
+   - Halaman daftar sederhana menampilkan log data yang dihapus (Waktu dihapus, Processed status, Nominal, Metode pembayaran, Catatan).
+   - Tampilan bersih dan jelas berlabel Read-Only.
+4. **Navigasi Dashboard**:
+   - Tambahkan menu/tombol pintasan menuju `TransactionHistoryScreen` dari `DashboardScreen` (misal di AppBar action atau drawer).
 
 ---
 
-## 4. Desain Frontend UI/UX (Flutter)
+## 6. Panduan Langkah Pengerjaan (Step-by-Step Guide)
 
-### A. Struktur Arsitektur Fitur (`frontend/lib/features/finance/`)
-
-```
-lib/features/finance/
-├── domain/
-│   └── models.dart                     # Model MSTAccount diperbarui
-├── data/
-│   └── finance_repository.dart         # Method API: getCoa, createCoa, updateCoa, deleteCoa, lookupCoa
-└── presentation/
-    ├── bloc/
-    │   ├── coa_bloc.dart               # State Management COA
-    │   ├── coa_event.dart
-    │   └── coa_state.dart
-    ├── screens/
-    │   └── coa_management_screen.dart   # Halaman utama konfigurasi COA
-    └── widgets/
-        ├── coa_form_dialog.dart        # Dialog Tambah/Edit Akun
-        ├── coa_lookup_dialog.dart      # Dialog Popup Lookup Nilai Dimensi
-        └── coa_hierarchy_view.dart     # (Opsional) Visualisasi hierarki level 1-4
-```
-
----
-
-### B. Spesifikasi Layar & Komponen UI
-
-#### 1. Halaman Utama: `CoaManagementScreen`
-- **Akses Navigasi**: Dapat dibuka dari **Drawer Menu Utama** di `DashboardScreen`: *"Manajemen Bagan Akun (COA)"*.
-- **Header & Filter Bar**:
-  - Search bar interaktif dengan pencarian cepat (*filter by code or description*).
-  - Filter Switch: "Tampilkan Akun Nonaktif" (`include_inactive`).
-  - Filter Tipe Saldo: Semua / Debit / Credit.
-- **Daftar Akun (ListView / DataTable / Card Grouping)**:
-  - Setiap baris menampilkan:
-    - **Kode Akun (`account`)**: Ditampilkan tebal (*bold*), misal `1001`.
-    - **Nama Akun (`description`)**: Nama lengkap akun.
-    - **Badge Tipe Saldo**:
-      - `Debit` : Chip berwarna biru terang (`Colors.blue.shade100` / teks biru tua).
-      - `Credit`: Chip berwarna oranye/amber terang (`Colors.orange.shade100` / teks cokelat/oranye).
-    - **Tag Dimensi (Hierarki Level)**:
-      - Menampilkan chip kecil dimensi yang terisi, misal: `L1: 1000`, `L2: 1100` untuk memudahkan membaca hierarki.
-    - **Indikator Terkunci Transaksi**:
-      - Jika `has_transactions == true`, tampilkan ikon gembok abu-abu dengan Tooltip: *"Akun telah digunakan dalam transaksi (Kode & Tipe terkunci)"*.
-    - **Aksi Cepat**:
-      - Switch/Toggle status `active` (hanya bisa diubah jika belum ada transaksi).
-      - Tombol **Edit** (ikon pensil).
-      - Tombol **Hapus** (ikon tempat sampah merah).
-- **Floating Action Button**:
-  - Tombol bertuliskan "+ Tambah Akun" untuk membuka `CoaFormDialog` dalam mode penambahan baru.
+1. **Step 1: Backend Database Model**:
+   - Buka `backend/app/models/finance.py`.
+   - Tambahkan kolom `processed = Column(Boolean, default=False, nullable=False)` pada `Transaction`.
+   - Definisikan model `DeletedTransaction` (termasuk kolom `processed`).
+   - Update `backend/init_db.py` dan jalankan sinkronisasi database (`python reset_db.py ; python init_db.py`).
+2. **Step 2: Backend Schemas & Endpoints**:
+   - Buka `backend/app/schemas/finance.py`, tambahkan `TransactionUpdate`, update `TransactionResponse`, dan buat `DeletedTransactionResponse` (pastikan `processed` tidak ada di `TransactionUpdate`).
+   - Buka `backend/app/api/v1/finance.py`, implementasikan endpoint `GET /transactions`, `PUT /transactions/{id}`, `DELETE /transactions/{id}`, dan `GET /transactions/deleted`.
+3. **Step 3: Frontend Data & Domain Layer**:
+   - Update model `Transaction` dan tambahkan `DeletedTransaction` di `domain/models.dart`.
+   - Tambahkan method terkait transaksi di `data/finance_repository.dart`.
+4. **Step 4: Frontend BLoC Layer**:
+   - Buat `TransactionHistoryBloc`, `event`, dan `state`.
+5. **Step 5: Frontend UI Layer**:
+   - Buat `EditTransactionDialog`.
+   - Buat `DeletedTransactionsScreen`.
+   - Buat `TransactionHistoryScreen` dengan filter bar lengkap dan kolom `processed` berupa read-only Checkbox.
+   - Tambahkan navigasi menuju riwayat transaksi di `DashboardScreen`.
+6. **Step 6: Static Analysis & Testing**:
+   - Jalankan `flutter analyze` untuk memastikan kode frontend bebas error dan warning.
+   - Verifikasi endpoint dengan pengujian manual / curl.
 
 ---
 
-#### 2. Dialog Form Akun: `CoaFormDialog`
-Digunakan untuk **Tambah Akun Baru** maupun **Edit Akun**.
+## 7. Kriteria Penerimaan & Verifikasi (Acceptance Criteria)
 
-- **Field Input & Validasi**:
-  1. **Kode Akun (`account`)**:
-     - Text field (Maks 20 karakter, huruf kapital/angka).
-     - *Validasi*: Wajib diisi.
-     - *State Khusus*: Jika dalam mode edit dan `has_transactions == true`, text field berstatus **READ-ONLY / DISABLED** dengan keterangan: *"Tidak dapat diubah karena akun telah digunakan dalam transaksi."*
-  2. **Nama / Deskripsi Akun (`description`)**:
-     - Text field (Maks 255 karakter).
-     - *Validasi*: Wajib diisi. Selalu dapat diedit.
-  3. **Tipe Akun (`type`)**:
-     - Dropdown / Segmented Button: `Debit` atau `Credit`.
-     - *Validasi*: Wajib dipilih.
-     - *State Khusus*: Jika dalam mode edit dan `has_transactions == true`, input ini berstatus **DISABLED**.
-  4. **Dimensi 1 hingga Dimensi 4 (Hierarki Akun)**:
-     - Disediakan 4 baris input opsional untuk `dimensi1`, `dimensi2`, `dimensi3`, dan `dimensi4`.
-     - Setiap baris dimensi memiliki:
-       - Label jelas, misal: *"Dimensi 1 (Induk Level 1)"*, *"Dimensi 2 (Induk Level 2)"*, dst.
-       - Teks deskriptif akun terpilih (misal: `1000 - ASET LANCAR`) atau *"Belum diatur (Opsional)"*.
-       - **Ikon Pencarian (Lookup)**: Membuka `CoaLookupDialog` untuk mencari dan memilih akun.
-       - **Ikon Hapus / Clear**: Mengosongkan nilai dimensi kembali menjadi `null`.
-  5. **Checkbox Status Aktif (`active`)**:
-     - Checkbox / Switch dengan label *"Status Aktif"*. Default bernilai `True`.
-     - Jika dinonaktifkan, akun tidak dapat dipilih lagi pada transaksi mendatang.
-  6. **Informasi Audit Sistem (Read-Only)**:
-     - Ditampilkan pada mode edit di bagian bawah form:
-       - `created_at`: Menampilkan tanggal dan jam pembuatan akun (format lokal user atau UTC).
-       - `created_by`: Menampilkan ID / nama pemilik akun.
-- **Banner Peringatan Transaksi**:
-  - Jika akun memiliki transaksi, tampilkan kotak info berwarna oranye/kuning di atas form:
-    > *"⚠️ Perhatian: Akun ini sudah memiliki catatan transaksi. Kode akun dan tipe saldo tidak dapat dimodifikasi demi menjaga konsistensi pembukuan."*
-- **Tombol Form**:
-  - Tombol **Batal** dan Tombol **Simpan**.
-
----
-
-#### 3. Modal Dialog Lookup Dimensi: `CoaLookupDialog`
-- **Tujuan**: Memungkinkan user mencari dan memilih akun induk untuk `dimensi1` s/d `dimensi4` secara interaktif.
-- **Fitur Modal**:
-  - **Judul**: *"Pilih Akun Induk (Dimensi [X])"*.
-  - **Search Input**: Text field pencarian dengan filter *real-time* berdasarkan kode akun maupun deskripsi akun.
-  - **Pencegahan Self-Reference**: Akun yang sedang diedit otomatis dikecualikan (`exclude_account`) dari daftar pencarian agar akun tidak bisa memilih dirinya sendiri sebagai dimensi.
-  - **Daftar Akun**: Menampilkan list akun aktif milik user lengkap dengan nomor akun, deskripsi, dan badge tipe.
-  - **Aksi Pemilihan**: Mengklik item langsung memilih akun tersebut, menutup dialog, dan mengisi nilai dimensi pada form.
-  - Tombol **Batal** atau **Kosongkan Pilihan**.
-
----
-
-#### 4. Dialog Konfirmasi Soft Delete
-- Saat user menekan ikon tempat sampah pada akun:
-  - **Kondisi A (Akun sudah ada transaksi)**:
-    - Munculkan AlertDialog peringatan (*Error / Forbidden*):
-      > *"⛔ Akun Tidak Dapat Dihapus*\n\n*Akun [Kode - Nama] tidak dapat dinonaktifkan atau dihapus karena masih memiliki riwayat transaksi. Harap sesuaikan atau hapus transaksi terkait terlebih dahulu."*
-    - Hanya ada tombol **Tutup**.
-  - **Kondisi B (Akun belum ada transaksi)**:
-    - Munculkan AlertDialog konfirmasi:
-      > *"Apakah Anda yakin ingin menonaktifkan akun [Kode - Nama]? Akun ini akan berstatus nonaktif dan tidak dapat dipilih pada transaksi baru."*
-    - Tombol: **Batal** dan **Nonaktifkan** (Warna Merah).
-    - Saat dikonfirmasi, kirim request `DELETE /api/v1/coa/{id}` dan lakukan *refresh* data otomatis.
-
----
-
-## 5. Pembaruan File Dokumentasi Wajib
-
-Setelah seluruh pekerjaan kode selesai, developer/AI wajib memperbarui file-file dokumentasi berikut:
-1. **`docs/table.md`**:
-   - Perbarui skema tabel `mst_account` (tambahkan kolom `id`, `created_by`, penyesuaian tipe data dimensi, dan composite unique constraint `(created_by, account)`).
-   - Perbarui diagram Mermaid ERD yang menggambarkan relasi `mst_account` dengan `users`, `payment_methods`, dan hierarki self-referencing.
-2. **`docs/routes.md`**:
-   - Tambahkan daftar seluruh endpoint `/api/v1/coa` (`GET`, `POST`, `PUT`, `DELETE`, `lookup`).
-   - Tambahkan rute layar `CoaManagementScreen` pada bagian navigasi Flutter.
-3. **`docs/features.md`**:
-   - Perbarui baris fitur **General Ledger (COA Management)**:
-     - Ubah status pengerjaan dari `🟡 Parsial` menjadi `🟢 Selesai`.
-     - Ubah status test menjadi `⚠️ Manual Verified`.
-     - Perbarui rincian deskripsi fitur pada bagian bawah dokumen.
-
----
-
-## 6. Kriteria Penerimaan (Definition of Done / DoD)
-
-### Backend:
-- [ ] Model `MST_Account` memiliki kolom `id` (UUID PK), `account`, `description`, `type`, `dimensi1..4`, `active`, `created_at`, dan `created_by`.
-- [ ] Terdapat `UniqueConstraint('created_by', 'account')` sehingga kode akun unik per pengguna.
-- [ ] Query `GET /api/v1/coa` hanya mengembalikan akun milik user yang sedang login (`created_by == current_user.id`).
-- [ ] Respon akun menyertakan flag `has_transactions: bool` yang akurat.
-- [ ] Endpoint `POST /api/v1/coa` berhasil membuat akun baru, memvalidasi duplikasi kode (HTTP 409), dan mencegah dimensi merujuk ke kode akun itu sendiri.
-- [ ] Endpoint `PUT /api/v1/coa/{id}` **MENOLAK** pengubahan `account` dan `type` dengan HTTP 400 jika akun sudah memiliki transaksi.
-- [ ] Endpoint `DELETE /api/v1/coa/{id}` **MENOLAK** penghapusan dengan HTTP 400 jika akun sudah memiliki transaksi.
-- [ ] Endpoint `DELETE /api/v1/coa/{id}` melakukan **soft delete** (`active = False`), tidak melakukan hard delete di database.
-- [ ] Endpoint `GET /api/v1/coa/lookup` berhasil memfilter akun aktif milik user dan mendukung parameter pencarian `q` serta `exclude_account`.
-- [ ] Registrasi user baru (`POST /api/v1/auth/register`) secara otomatis menduplikasi template COA default ke akun user baru tersebut.
-- [ ] Database re-seed via `python init_db.py` dan `python reset_db.py` berjalan bersih tanpa error.
-
-### Frontend:
-- [ ] Layar `CoaManagementScreen` dapat diakses melalui Drawer Menu Navigasi di `DashboardScreen`.
-- [ ] Menampilkan daftar akun secara rapi dengan badge warna Debit (biru) dan Credit (oranye), serta tag hierarki `dimensi1` s/d `dimensi4`.
-- [ ] Form Tambah/Edit memiliki popup lookup modal interaktif (`CoaLookupDialog`) untuk memilih nilai `dimensi1` hingga `dimensi4`.
-- [ ] Pengguna dapat mengosongkan nilai dimensi jika akun tidak memiliki induk.
-- [ ] Form Edit mengunci (*read-only / disabled*) input `account` dan `type` jika akun sudah memiliki riwayat transaksi, disertai alert/banner penjelasan yang ramah.
-- [ ] Field `created_at` dan `created_by` tampil sebagai informasi audit *read-only* yang tidak dapat diedit user.
-- [ ] Aksi hapus menampilkan modal konfirmasi soft-delete jika belum ada transaksi, atau menampilkan modal peringatan larangan hapus jika akun sudah memiliki transaksi.
-- [ ] Filter pencarian teks dan filter status aktif/nonaktif berfungsi responsif pada daftar akun.
-- [ ] Analisis statis Flutter lulus bersih tanpa warning atau error (`flutter analyze`).
+- [ ] **Kolom `processed`**:
+  - Kolom `processed` bertipe boolean dengan default `False`.
+  - Kolom `processed` **TIDAK BISA** diedit oleh user melalui UI maupun API `PUT /transactions/{id}`.
+  - Tampil di halaman Transaction History dalam bentuk **Checkbox** (read-only / disabled).
+- [ ] **Data Isolation**: User A tidak dapat melihat riwayat transaksi aktif maupun data transaksi terhapus milik User B.
+- [ ] **Filter Bekerja**:
+  - Filter rentang tanggal (Date Picker) menyaring transaksi sesuai tanggal yang dipilih.
+  - Filter catatan menyaring transaksi berdasarkan substring teks.
+  - Filter tipe menyaring transaksi berdasarkan tipe yang dipilih.
+  - Filter metode pembayaran hanya menampilkan transaksi dengan metode pembayaran terpilih.
+- [ ] **Edit Transaksi**:
+  - Transaksi berhasil diedit, nominal base currency dihitung ulang jika kurs/nominal berganti.
+  - `updated_at` terupdate ke timestamp saat edit dilakukan.
+  - Validasi backdate menolak tanggal di masa depan.
+  - Kolom `processed` tidak berubah saat transaksi diedit.
+- [ ] **Validasi Hapus (Delete Guard)**:
+  - Transaksi dengan `processed = TRUE` **DITOLAK** saat akan dihapus (backend merespons `HTTP 400 Bad Request` dengan pesan yang sesuai).
+  - Pada antarmuka pengguna (UI), tombol hapus pada baris transaksi yang bernilai `processed = TRUE` berada dalam kondisi dinonaktifkan (*disabled*).
+- [ ] **Hapus & Audit Log (untuk `processed = FALSE`)**:
+  - Menghapus transaksi memindahkannya ke tabel `deleted_transactions` beserta waktu hapus, user penghapus, dan status `processed = FALSE`.
+  - Transaksi hilang dari daftar `transactions` aktif.
+  - Halaman "View Deleted Transactions" menampilkan transaksi yang baru saja dihapus secara akurat.
+- [ ] **Kualitas Kode**:
+  - `flutter analyze` bersih (0 error).
+  - Tidak ada perubahan pada zona terlarang (`core/database.py`, `core/security.py`, `.env`).

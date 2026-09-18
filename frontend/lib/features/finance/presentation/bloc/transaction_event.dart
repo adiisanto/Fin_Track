@@ -20,20 +20,22 @@ class TransactionRateRequested extends TransactionEvent {
 }
 
 class TransactionSubmitRequested extends TransactionEvent {
-  final String type;
+  final String? type;
   final String currencyCode;
   final double amount;
   final String paymentMethodId;
   final String? notes;
+  final DateTime? transactionDate;
 
   const TransactionSubmitRequested({
-    required this.type,
+    this.type,
     required this.currencyCode,
     required this.amount,
     required this.paymentMethodId,
     this.notes,
+    this.transactionDate,
   });
 
   @override
-  List<Object?> get props => [type, currencyCode, amount, paymentMethodId, notes];
+  List<Object?> get props => [type, currencyCode, amount, paymentMethodId, notes, transactionDate];
 }

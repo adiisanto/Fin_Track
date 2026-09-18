@@ -171,25 +171,98 @@ class FinanceRepository {
   }
 
   Future<void> createTransaction({
-    required String type,
+    String? type,
     required String currencyCode,
     required double amount,
     required String paymentMethodId,
     String? notes,
+    DateTime? transactionDate,
   }) async {
     try {
+      final data = {
+        'type': type,
+        'currency_code': currencyCode,
+        'amount': amount,
+        'payment_method_id': paymentMethodId,
+        'notes': notes,
+      };
+      if (transactionDate != null) {
+        data['transaction_date'] = transactionDate.toUtc().toIso8601String();
+      }
+      
       await dio.post(
         '/api/v1/transactions',
-        data: {
-          'type': type,
-          'currency_code': currencyCode,
-          'amount': amount,
-          'payment_method_id': paymentMethodId,
-          'notes': notes,
-        },
+        data: data,
       );
     } on DioException catch (e) {
       throw Exception(e.response?.data['detail'] ?? 'Failed to create transaction');
+    }
+  }
+
+  Future<List<Transaction>> getTransactions({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? type,
+    String? notes,
+    String? paymentMethodId,
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{};
+      if (startDate != null) queryParams['start_date'] = startDate.toUtc().toIso8601String();
+      if (endDate != null) queryParams['end_date'] = endDate.toUtc().toIso8601String();
+      if (type != null && type.isNotEmpty) queryParams['type'] = type;
+      if (notes != null && notes.isNotEmpty) queryParams['notes'] = notes;
+      if (paymentMethodId != null && paymentMethodId.isNotEmpty) queryParams['payment_method_id'] = paymentMethodId;
+
+      final response = await dio.get('/api/v1/transactions', queryParameters: queryParams);
+      return (response.data['data'] as List)
+          .map((json) => Transaction.fromJson(json))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to load transactions');
+    }
+  }
+
+  Future<Transaction> updateTransaction(String id, {
+    String? type,
+    String? currencyCode,
+    double? amount,
+    String? paymentMethodId,
+    String? notes,
+    DateTime? transactionDate,
+  }) async {
+    try {
+      final data = <String, dynamic>{};
+      if (type != null) data['type'] = type;
+      if (currencyCode != null) data['currency_code'] = currencyCode;
+      if (amount != null) data['amount'] = amount;
+      if (paymentMethodId != null) data['payment_method_id'] = paymentMethodId;
+      if (notes != null) data['notes'] = notes;
+      if (transactionDate != null) data['transaction_date'] = transactionDate.toUtc().toIso8601String();
+
+      final response = await dio.put('/api/v1/transactions/$id', data: data);
+      return Transaction.fromJson(response.data['data']);
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to update transaction');
+    }
+  }
+
+  Future<void> deleteTransaction(String id) async {
+    try {
+      await dio.delete('/api/v1/transactions/$id');
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to delete transaction');
+    }
+  }
+
+  Future<List<DeletedTransaction>> getDeletedTransactions() async {
+    try {
+      final response = await dio.get('/api/v1/transactions/deleted');
+      return (response.data['data'] as List)
+          .map((json) => DeletedTransaction.fromJson(json))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['detail'] ?? 'Failed to load deleted transactions');
     }
   }
 
